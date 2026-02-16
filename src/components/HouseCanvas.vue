@@ -7,6 +7,7 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 
 // ========== ПРОПСЫ ==========
 // Размеры дома (м), кирпича (мм), зазор (мм), кол-во кирпичей в ряду и рядов
@@ -18,13 +19,17 @@ const props = defineProps({
   brickHeight: { type: Number, default: 250 },
   brickGap: { type: Number, default: 2 },
   edgeColor: { type: String, default: '#00ff00' },
+  showAllNumbers: { type: Boolean, default: false },
+  labelSize: { type: Number, default: 1 },
   bricksPerRow: { type: Number, default: 0 },
   rows: { type: Number, default: 10 },
 })
 
 // ========== ССЫЛКИ И ПЕРЕМЕННЫЕ ==========
 const containerRef = ref(null) // DOM-элемент для вставки canvas
-let scene, camera, renderer, controls, wallsGroup, groundMesh
+let scene, camera, renderer, labelRenderer, controls, wallsGroup, groundMesh
+let raycaster, mouse
+let hoveredBrickMesh = null
 let lastBrickGeometry, lastBrickMaterial // Общая геометрия/материал для всех кирпичей (для переиспользования)
 let lastEdgesGeometry, lastLineMaterial // Геометрия рёбер и материал линий (подсветка граней кирпичей)
 let animationId = null
@@ -58,6 +63,22 @@ function init() {
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   containerRef.value.appendChild(renderer.domElement)
+
+  // CSS2DRenderer для подписей-номеров на кирпичах
+  labelRenderer = new CSS2DRenderer()
+  labelRenderer.setSize(w, h)
+  labelRenderer.domElement.style.position = 'absolute'
+  labelRenderer.domElement.style.top = '0'
+  labelRenderer.domElement.style.left = '0'
+  labelRenderer.domElement.style.width = '100%'
+  labelRenderer.domElement.style.height = '100%'
+  labelRenderer.domElement.style.pointerEvents = 'none'
+  labelRenderer.domElement.style.zIndex = '1'
+  containerRef.value.appendChild(labelRenderer.domElement)
+
+  // Raycaster для hover (определение кирпича под мышью)
+  raycaster = new THREE.Raycaster()
+  mouse = new THREE.Vector2()
 
   // OrbitControls: вращение камеры мышью, масштаб колёсиком
   controls = new OrbitControls(camera, renderer.domElement)
@@ -115,11 +136,22 @@ function addGround() {
   scene.add(groundMesh)
 }
 
+// Удаление DOM-элементов лейблов (иначе при пересборке они накапливаются и дублируются)
+function cleanupLabelElements(obj) {
+  obj.traverse((child) => {
+    if (child.isCSS2DObject && child.element?.parentNode) {
+      child.element.parentNode.removeChild(child.element)
+    }
+  })
+}
+
 // ========== ПОСТРОЕНИЕ СТЕН ИЗ КИРПИЧЕЙ ==========
 function buildWalls() {
-  // Очистка: удаляем все кирпичи и освобождаем общие ресурсы
+  // Очистка: удаляем DOM лейблов, затем меши (без этого лейблы дублируются)
   while (wallsGroup.children.length > 0) {
-    wallsGroup.remove(wallsGroup.children[0])
+    const mesh = wallsGroup.children[0]
+    cleanupLabelElements(mesh)
+    wallsGroup.remove(mesh)
   }
   lastBrickGeometry?.dispose()
   lastBrickMaterial?.dispose()
@@ -165,7 +197,7 @@ function buildWalls() {
   const offset = brickL / 2 + 0.005
 
   // Конфиг четырёх стен: front, right, back, left
-  // axis — вдоль какой оси идут кирпичи; xOff/zOff — смещение наружу
+  // Порядок: фронт (угол 1) → право → зад → лево → снова угол 1. Первый кирпич — в углу (фронт-лево).
   const walls = [
     { bricks: bricksFront, length: props.houseLength, cx: 0, cz: -W, axis: 'x', xOff: 0, zOff: -offset },
     { bricks: bricksRight, length: props.houseWidth, cx: L, cz: 0, axis: 'z', xOff: offset, zOff: 0 },
@@ -173,25 +205,50 @@ function buildWalls() {
     { bricks: bricksRight, length: props.houseWidth, cx: -L, cz: 0, axis: 'z', xOff: -offset, zOff: 0 },
   ]
 
-  walls.forEach((wall) => {
-    // Шаг между кирпичами с учётом зазора (в метрах)
-    const stepAlong = brickW + gapM
-    const stepVertical = brickH + gapM
+  let brickNumber = 1
+  const bricksInRow = 2 * bricksFront + 2 * bricksRight
+  const baseFontSize = 10 * (props.labelSize || 1)
 
-    for (let col = 0; col < wall.bricks; col++) {
-      for (let row = 0; row < rowsCount; row++) {
+  // Порядок: ряд 0 по периметру (1 в углу), ряд 1, ряд 2… Первый — в углу (front-left).
+  for (let row = 0; row < rowsCount; row++) {
+    const y = row * (brickH + gapM) + brickH / 2
+    const stepAlong = brickW + gapM
+    let posInRow = 0
+
+    walls.forEach((wall) => {
+      for (let col = 0; col < wall.bricks; col++) {
+        const isFirstInRow = posInRow === 0
+        const isLastInRow = posInRow === bricksInRow - 1
+        posInRow++
+
         const mesh = new THREE.Mesh(lastBrickGeometry, lastBrickMaterial)
         mesh.castShadow = true
         mesh.receiveShadow = true
 
-        // Подсветка рёбер — зелёные линии по граням кирпича
         const edges = new THREE.LineSegments(lastEdgesGeometry, lastLineMaterial)
         mesh.add(edges)
 
-        // Позиция по длине стены (центрируем ряд)
+        const labelDiv = document.createElement('div')
+        labelDiv.className = 'brick-label'
+        labelDiv.textContent = brickNumber
+        labelDiv.style.fontSize = `${baseFontSize}px`
+        const labelObj = new CSS2DObject(labelDiv)
+        labelObj.position.set(0, 0, 0)
+        labelObj.center.set(0.5, 0.5)
+        mesh.add(labelObj)
+
+        mesh.userData = {
+          number: brickNumber,
+          isFirstInRow,
+          isLastInRow,
+          labelEl: labelDiv,
+          labelObj, // CSS2DObject — видимость через .visible (рендерер перезаписывает style.display)
+        }
+        brickNumber++
+
+        updateLabelVisibility(mesh, props.showAllNumbers, false)
+
         const along = (col + 0.5) * stepAlong - (wall.bricks * stepAlong) / 2
-        // Позиция по высоте (Y в Three.js — вверх)
-        const y = row * stepVertical + brickH / 2
 
         if (wall.axis === 'x') {
           mesh.position.set(wall.cx + along, y, wall.cz + wall.zOff)
@@ -200,17 +257,72 @@ function buildWalls() {
         }
         wallsGroup.add(mesh)
       }
-    }
-  })
+    })
+  }
+
+  hoveredBrickMesh = null
 
   // Fallback: если кирпичей 0, рисуем хотя бы один
   if (wallsGroup.children.length === 0) {
     const mesh = new THREE.Mesh(lastBrickGeometry, lastBrickMaterial)
     mesh.add(new THREE.LineSegments(lastEdgesGeometry, lastLineMaterial))
+    const labelDiv = document.createElement('div')
+    labelDiv.className = 'brick-label'
+    labelDiv.textContent = '1'
+    labelDiv.style.fontSize = `${baseFontSize}px`
+    const labelObj = new CSS2DObject(labelDiv)
+    labelObj.center.set(0.5, 0.5)
+    mesh.add(labelObj)
+    mesh.userData = { number: 1, isFirstInRow: true, isLastInRow: true, labelEl: labelDiv, labelObj }
     mesh.position.set(0, brickH / 2, -W - brickL / 2)
     mesh.castShadow = true
     wallsGroup.add(mesh)
   }
+}
+
+// Видимость лейбла: галочка вкл — все номера; галочка выкл — только на кирпиче под мышью
+// CSS2DRenderer перезаписывает element.style.display каждый кадр, поэтому управляем через .visible
+function updateLabelVisibility(mesh, showAll, isHovered) {
+  const { labelEl, labelObj } = mesh.userData || {}
+  if (!labelEl || !labelObj) return
+  const show = showAll || isHovered
+  labelObj.visible = show
+  labelEl.classList.toggle('brick-label-hover', isHovered)
+}
+
+function updateAllLabelsVisibility(showAll) {
+  const val = showAll ?? props.showAllNumbers
+  wallsGroup?.traverse((obj) => {
+    if (obj.isMesh && obj.userData?.labelEl) {
+      updateLabelVisibility(obj, val, obj === hoveredBrickMesh)
+    }
+  })
+}
+
+function onPointerMove(event) {
+  if (!containerRef.value || !camera || !wallsGroup) return
+  const rect = containerRef.value.getBoundingClientRect()
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(mouse, camera)
+  const intersects = raycaster.intersectObjects(wallsGroup.children)
+  const hit = intersects[0]?.object
+  if (hit !== hoveredBrickMesh) {
+    if (hoveredBrickMesh?.userData?.labelEl) {
+      updateLabelVisibility(hoveredBrickMesh, props.showAllNumbers, false)
+    }
+    hoveredBrickMesh = hit || null
+    if (hoveredBrickMesh?.userData?.labelEl) {
+      updateLabelVisibility(hoveredBrickMesh, props.showAllNumbers, true)
+    }
+  }
+}
+
+function onPointerLeave() {
+  if (hoveredBrickMesh?.userData?.labelEl) {
+    updateLabelVisibility(hoveredBrickMesh, props.showAllNumbers, false)
+  }
+  hoveredBrickMesh = null
 }
 
 // ========== ОБНОВЛЕНИЕ СЦЕНЫ ==========
@@ -224,6 +336,7 @@ function animate() {
   animationId = requestAnimationFrame(animate)
   controls.update()
   renderer.render(scene, camera)
+  if (labelRenderer) labelRenderer.render(scene, camera)
 }
 
 // ========== РЕСАЙЗ ==========
@@ -234,6 +347,7 @@ function onResize() {
   camera.aspect = w / h
   camera.updateProjectionMatrix()
   renderer.setSize(w, h)
+  if (labelRenderer) labelRenderer.setSize(w, h)
 }
 
 // ========== LIFECYCLE ==========
@@ -242,24 +356,40 @@ onMounted(() => {
   updateScene()
   animate()
   window.addEventListener('resize', onResize)
+  const el = containerRef.value
+  if (el) {
+    el.addEventListener('pointermove', onPointerMove)
+    el.addEventListener('pointerleave', onPointerLeave)
+  }
 })
 
 onUnmounted(() => {
   // Очистка: останавливаем анимацию, удаляем canvas, освобождаем ресурсы
   window.removeEventListener('resize', onResize)
+  const el = containerRef.value
+  if (el) {
+    el.removeEventListener('pointermove', onPointerMove)
+    el.removeEventListener('pointerleave', onPointerLeave)
+  }
   if (animationId) cancelAnimationFrame(animationId)
-  if (containerRef.value && renderer?.domElement) {
+  if (containerRef.value) {
     try {
-      containerRef.value.removeChild(renderer.domElement)
+      if (renderer?.domElement) containerRef.value.removeChild(renderer.domElement)
+      if (labelRenderer?.domElement) containerRef.value.removeChild(labelRenderer.domElement)
     } catch (_) {}
   }
   renderer?.dispose()
   controls?.dispose()
+  wallsGroup?.traverse?.((obj) => {
+    if (obj.isCSS2DObject && obj.element?.parentNode) {
+      obj.element.parentNode.removeChild(obj.element)
+    }
+  })
   wallsGroup?.clear?.()
 })
 
 // ========== РЕАКТИВНОСТЬ ==========
-// Перестраиваем сцену при изменении любых параметров
+// Перестраиваем сцену при изменении параметров (кроме showAllNumbers — только видимость)
 watch(
   () => [
     props.houseLength,
@@ -269,16 +399,24 @@ watch(
     props.brickHeight,
     props.brickGap,
     props.edgeColor,
+    props.labelSize,
     props.bricksPerRow,
     props.rows,
   ],
   () => updateScene(),
   { deep: true }
 )
+// Показать/скрыть номера — срабатывает при клике на галочку и при монтировании
+watch(
+  () => props.showAllNumbers,
+  (newVal) => updateAllLabelsVisibility(newVal),
+  { immediate: true }
+)
 </script>
 
 <style scoped>
 .canvas-wrapper {
+  position: relative;
   width: 100%;
   min-height: 450px;
   flex: 1;
@@ -291,5 +429,20 @@ watch(
 .canvas-wrapper :deep(canvas) {
   display: block;
   border-radius: 8px;
+}
+
+/* Стили для подписей-номеров кирпичей (CSS2DObject) */
+:deep(.brick-label) {
+  color: #000;
+  font-weight: bold;
+  white-space: nowrap;
+  padding: 2px 4px;
+  background: #ffeb3b;
+  border-radius: 4px;
+}
+
+:deep(.brick-label.brick-label-hover) {
+  background: #1b5e20;
+  color: #fff;
 }
 </style>

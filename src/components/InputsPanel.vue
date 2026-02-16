@@ -58,6 +58,24 @@
       </div>
     </div>
     <div class="field-group">
+      <label class="checkbox-label">
+        <input
+          type="checkbox"
+          class="checkbox-input"
+          :checked="showAllNumbers"
+          @change="emit('update:showAllNumbers', ($event.target).checked)"
+        />
+        Показать все номера кирпичей
+      </label>
+    </div>
+    <div class="field-group">
+      <label>Размер лейбла кирпича</label>
+      <div class="input-row">
+        <Slider v-model="localLabelSize" :min="0.5" :max="2" :step="0.1" class="slider" />
+        <span class="hint">{{ localLabelSize.toFixed(1) }}×</span>
+      </div>
+    </div>
+    <div class="field-group">
       <label>Зазор между кирпичами (мм)</label>
       <div class="input-row">
         <InputNumber v-model="localBrickGap" :min="1" :max="3" :step="0.5" :minFractionDigits="0" :maxFractionDigits="1" />
@@ -98,6 +116,8 @@ const props = defineProps({
   brickHeight: { type: Number, default: 65 },
   brickGap: { type: Number, default: 2 },
   edgeColor: { type: String, default: '#00ff00' },
+  showAllNumbers: { type: Boolean, default: false },
+  labelSize: { type: Number, default: 1 },
   rows: { type: Number, default: 10 },
   wallHeight: { type: Number, default: 0 },
 })
@@ -110,6 +130,8 @@ const emit = defineEmits([
   'update:brickHeight',
   'update:brickGap',
   'update:edgeColor',
+  'update:showAllNumbers',
+  'update:labelSize',
   'update:rows',
 ])
 
@@ -179,6 +201,10 @@ const localBrickGap = computed({
 const localEdgeColor = computed({
   get: () => props.edgeColor,
   set: (v) => emit('update:edgeColor', v ?? '#00ff00'),
+})
+const localLabelSize = computed({
+  get: () => props.labelSize,
+  set: (v) => emit('update:labelSize', v ?? 1),
 })
 const localRows = computed({
   get: () => props.rows,
@@ -283,5 +309,18 @@ const localRows = computed({
 .color-value {
   font-size: 0.85rem;
   color: #aaa;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.checkbox-input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
 }
 </style>

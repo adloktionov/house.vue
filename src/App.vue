@@ -15,6 +15,8 @@
           v-model:brick-height="brickHeight"
           v-model:brick-gap="brickGap"
           v-model:edge-color="edgeColor"
+          v-model:show-all-numbers="showAllNumbers"
+          v-model:label-size="labelSize"
           v-model:rows="rows"
           :wall-height="wallHeight"
         />
@@ -29,6 +31,8 @@
           :brick-height="brickHeight"
           :brick-gap="brickGap"
           :edge-color="edgeColor"
+          :show-all-numbers="showAllNumbers"
+          :label-size="labelSize"
           :bricks-per-row="bricksPerRow"
           :rows="rows"
         />
@@ -68,8 +72,8 @@ import HouseCanvas from './components/HouseCanvas.vue'
 import ResultsTable from './components/ResultsTable.vue'
 
 // Размеры дома (м)
-const houseLength = ref(10)
-const houseWidth = ref(10)
+const houseLength = ref(2)
+const houseWidth = ref(2)
 
 // Размеры кирпича (мм) — стандарт 250x120x65
 const brickLength = ref(250)
@@ -77,9 +81,11 @@ const brickWidth = ref(120)
 const brickHeight = ref(65)
 const brickGap = ref(2)
 const edgeColor = ref('#00ff00') // Цвет рёбер кирпичей (ярко-зелёный по умолчанию)
+const showAllNumbers = ref(false) // Показать номера кирпичей (выкл — скрыть, при hover всё равно показывать)
+const labelSize = ref(1) // Размер лейбла (множитель 0.5–2)
 
 // Количество рядов
-const rows = ref(10)
+const rows = ref(1)
 
 // Вычисляемые значения (с учётом зазоров)
 const perimeter = computed(() => 2 * (houseLength.value + houseWidth.value))
