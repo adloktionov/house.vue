@@ -15,10 +15,9 @@
           v-model:brick-height="brickHeight"
           v-model:brick-gap="brickGap"
           v-model:edge-color="edgeColor"
+          v-model:ground-color="groundColor"
           v-model:show-all-numbers="showAllNumbers"
           v-model:label-size="labelSize"
-          v-model:rows="rows"
-          :wall-height="wallHeight"
         />
       </aside>
 
@@ -31,14 +30,42 @@
           :brick-height="brickHeight"
           :brick-gap="brickGap"
           :edge-color="edgeColor"
+          :ground-color="groundColor"
           :show-all-numbers="showAllNumbers"
           :label-size="labelSize"
           :bricks-per-row="bricksPerRow"
           :rows="rows"
+          :distribution-brick-count="distributionBrickCount"
         />
       </section>
 
       <aside class="panel panel-right">
+        <div class="info-block info-block-clamping">
+          <h3>Кладка</h3>
+          <div class="field-group">
+            <label>Количество рядов</label>
+            <div class="input-row">
+              <InputNumber v-model="rows" :min="1" :max="100" :step="1" />
+              <Slider v-model="rows" :min="1" :max="100" :step="1" class="slider" />
+            </div>
+            <p class="hint">Высота стен: {{ wallHeight.toFixed(2) }} м</p>
+          </div>
+          <div class="field-group">
+            <label>Количество кирпичей</label>
+            <div class="input-row">
+              <InputNumber
+                v-model="distributionBrickCount"
+                :min="0"
+                :max="100"
+                :minFractionDigits="0"
+                :maxFractionDigits="2"
+                :step="0.5"
+              />
+              <Slider v-model="distributionBrickCount" :min="0" :max="50" :step="0.5" class="slider" />
+            </div>
+            <p class="hint">0 = полная кладка. Иначе: центр — точка, отступ ½ ширины и ½ длины</p>
+          </div>
+        </div>
         <div class="info-block">
           <h3>Размеры кирпича</h3>
           <p>Длина: {{ brickLength }} мм</p>
@@ -66,7 +93,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
+import InputNumber from 'primevue/inputnumber'
+import Slider from 'primevue/slider'
 import InputsPanel from './components/InputsPanel.vue'
 import HouseCanvas from './components/HouseCanvas.vue'
 import ResultsTable from './components/ResultsTable.vue'
@@ -81,11 +110,15 @@ const brickWidth = ref(120)
 const brickHeight = ref(65)
 const brickGap = ref(2)
 const edgeColor = ref('#00ff00') // Цвет рёбер кирпичей (ярко-зелёный по умолчанию)
+const groundColor = ref('#4a5568') // Цвет плоскости (фундамента) дома
 const showAllNumbers = ref(false) // Показать номера кирпичей (выкл — скрыть, при hover всё равно показывать)
 const labelSize = ref(1) // Размер лейбла (множитель 0.5–2)
 
 // Количество рядов
 const rows = ref(1)
+
+// Поэтапное распределение: количество кирпичей (целое или дробное), по умолчанию 3
+const distributionBrickCount = ref(3)
 
 // Вычисляемые значения (с учётом зазоров)
 const perimeter = computed(() => 2 * (houseLength.value + houseWidth.value))
@@ -158,6 +191,40 @@ const wallHeight = computed(() => rows.value * (brickHeight.value + brickGap.val
 .info-block p {
   font-size: 0.9rem;
   margin: 0.25rem 0;
+}
+
+.info-block-clamping .field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.info-block-clamping .field-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #ccc;
+}
+
+.info-block-clamping .input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.info-block-clamping .input-row :deep(.p-inputnumber) {
+  flex: 1;
+}
+
+.info-block-clamping .input-row :deep(.p-inputnumber-input) {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+}
+
+.info-block-clamping .hint {
+  font-size: 0.8rem;
+  color: #a0a0a0;
+  margin-top: 0.25rem;
 }
 
 .canvas-area {

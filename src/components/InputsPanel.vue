@@ -58,6 +58,13 @@
       </div>
     </div>
     <div class="field-group">
+      <label>Цвет плоскости дома</label>
+      <div class="color-row">
+        <input v-model="localGroundColor" type="color" class="color-input" />
+        <span class="color-value">{{ localGroundColor }}</span>
+      </div>
+    </div>
+    <div class="field-group">
       <label class="checkbox-label">
         <input
           type="checkbox"
@@ -83,15 +90,6 @@
       </div>
     </div>
 
-    <h3>Кладка</h3>
-    <div class="field-group">
-      <label>Количество рядов</label>
-      <div class="input-row">
-        <InputNumber v-model="localRows" :min="1" :max="100" :step="1" />
-        <Slider v-model="localRows" :min="1" :max="100" :step="1" class="slider" />
-      </div>
-      <p class="hint">Высота стен: {{ wallHeight?.toFixed(2) }} м</p>
-    </div>
   </div>
 </template>
 
@@ -116,10 +114,9 @@ const props = defineProps({
   brickHeight: { type: Number, default: 65 },
   brickGap: { type: Number, default: 2 },
   edgeColor: { type: String, default: '#00ff00' },
+  groundColor: { type: String, default: '#4a5568' },
   showAllNumbers: { type: Boolean, default: false },
   labelSize: { type: Number, default: 1 },
-  rows: { type: Number, default: 10 },
-  wallHeight: { type: Number, default: 0 },
 })
 
 const emit = defineEmits([
@@ -130,9 +127,9 @@ const emit = defineEmits([
   'update:brickHeight',
   'update:brickGap',
   'update:edgeColor',
+  'update:groundColor',
   'update:showAllNumbers',
   'update:labelSize',
-  'update:rows',
 ])
 
 // Выбранный тип в выпадающем меню
@@ -202,13 +199,13 @@ const localEdgeColor = computed({
   get: () => props.edgeColor,
   set: (v) => emit('update:edgeColor', v ?? '#00ff00'),
 })
+const localGroundColor = computed({
+  get: () => props.groundColor,
+  set: (v) => emit('update:groundColor', v ?? '#4a5568'),
+})
 const localLabelSize = computed({
   get: () => props.labelSize,
   set: (v) => emit('update:labelSize', v ?? 1),
-})
-const localRows = computed({
-  get: () => props.rows,
-  set: (v) => emit('update:rows', v ?? 10),
 })
 </script>
 
