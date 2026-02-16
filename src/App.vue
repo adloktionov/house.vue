@@ -17,6 +17,7 @@
           v-model:edge-color="edgeColor"
           v-model:ground-color="groundColor"
           v-model:show-all-numbers="showAllNumbers"
+          v-model:show-brick-dimensions="showBrickDimensions"
           v-model:label-size="labelSize"
         />
       </aside>
@@ -32,6 +33,7 @@
           :edge-color="edgeColor"
           :ground-color="groundColor"
           :show-all-numbers="showAllNumbers"
+          :show-brick-dimensions="showBrickDimensions"
           :label-size="labelSize"
           :bricks-per-row="bricksPerRow"
           :rows="rows"
@@ -56,14 +58,14 @@
               <InputNumber
                 v-model="distributionBrickCount"
                 :min="0"
-                :max="100"
+                :max="10000"
                 :minFractionDigits="0"
-                :maxFractionDigits="2"
-                :step="0.5"
+                :maxFractionDigits="0"
+                :step="1"
               />
-              <Slider v-model="distributionBrickCount" :min="0" :max="50" :step="0.5" class="slider" />
+              <Slider v-model="distributionBrickCount" :min="0" :max="500" :step="1" class="slider" />
             </div>
-            <p class="hint">0 = полная кладка. Иначе: центр — точка, отступ ½ ширины и ½ длины</p>
+            <p class="hint">0 = полная кладка. При &gt;0: кирпичи по периметру; при замыкании круга — новый ряд со смещением на ½ кирпича</p>
           </div>
         </div>
         <div class="info-block">
@@ -112,6 +114,7 @@ const brickGap = ref(2)
 const edgeColor = ref('#00ff00') // Цвет рёбер кирпичей (ярко-зелёный по умолчанию)
 const groundColor = ref('#4a5568') // Цвет плоскости (фундамента) дома
 const showAllNumbers = ref(false) // Показать номера кирпичей (выкл — скрыть, при hover всё равно показывать)
+const showBrickDimensions = ref(false) // Показать размеры кирпича (стрелки X, Y, Z)
 const labelSize = ref(1) // Размер лейбла (множитель 0.5–2)
 
 // Количество рядов

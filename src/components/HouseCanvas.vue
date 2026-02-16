@@ -25,6 +25,7 @@ const props = defineProps({
   edgeColor: { type: String, default: '#00ff00' }, // цвет линий рёбер кирпичей
   groundColor: { type: String, default: '#4a5568' }, // цвет плоскости фундамента
   showAllNumbers: { type: Boolean, default: false }, // показывать все номера или только при hover
+  showBrickDimensions: { type: Boolean, default: false }, // стрелки X, Y, Z с размерами кирпича
   labelSize: { type: Number, default: 1 },        // масштаб подписи (0.5–2)
   bricksPerRow: { type: Number, default: 0 },     // всего кирпичей в одном ряду по периметру
   rows: { type: Number, default: 10 },             // количество рядов
@@ -38,6 +39,9 @@ let raycaster, mouse                               // луч из камеры �
 let hoveredBrickMesh = null                        // меш кирпича, над которым сейчас курсор
 let lastBrickGeometry, lastBrickMaterial           // одна геометрия/материал на все кирпичи (экономия памяти)
 let lastEdgesGeometry, lastLineMaterial            // рёбра кирпичей (контур), общие для всех
+let closureBrickMaterial, closureBrickLineMaterial // красные для замыкающих кирпичей
+let closureGeometries = []                         // геометрии замыкающих кирпичей — для dispose
+const closureBrickColor = 0xff0000                 // красный цвет замыкающего кирпича
 let animationId = null                             // id requestAnimationFrame для остановки цикла
 
 const brickColor = 0xc75c3d                        // цвет меша кирпича (оранжево-красный)
@@ -106,6 +110,77 @@ function init() {
 
   wallsGroup = new THREE.Group()                  // сюда добавляются все меши кирпичей
   scene.add(wallsGroup)
+}
+
+// ========== СТРЕЛКИ РАЗМЕРОВ КИРПИЧА (X, Y, Z) — у каждого кирпича ==========
+const ARROW_COLOR = 0xffff00
+const LABEL_BG = '#e67e22'
+const LABEL_TEXT = '#000000'
+
+function addDimensionArrowsToBrick(mesh, brickW, brickH, brickL, opts = {}) {
+  const { isClosure = false, closureLengthMm = null, closureAxis = 'z' } = opts
+  const closureLen = closureLengthMm != null ? closureLengthMm / 1000 : null
+  const dimZ = closureLen != null && closureAxis === 'z' ? closureLen : brickL
+  const vertex = new THREE.Vector3(-brickW / 2, -brickH / 2, -dimZ / 2)
+  const arrowColor = isClosure ? 0xff0000 : ARROW_COLOR
+  const labelBg = isClosure ? '#ff0000' : LABEL_BG
+  const labelText = isClosure ? '#ffffff' : LABEL_TEXT
+
+  const axes = [
+    { axis: 'x', dir: new THREE.Vector3(1, 0, 0), len: brickW, label: props.brickWidth },
+    { axis: 'y', dir: new THREE.Vector3(0, 1, 0), len: brickH, label: props.brickHeight },
+    { axis: 'z', dir: new THREE.Vector3(0, 0, 1), len: brickL, label: props.brickLength },
+  ]
+  axes.forEach(({ axis, dir, len, label }) => {
+    const useLen = closureLen != null && axis === closureAxis ? closureLen : len
+    const useLabel = closureLen != null && axis === closureAxis ? Math.round(closureLengthMm) : label
+    const arrow = new THREE.ArrowHelper(dir, vertex, useLen, arrowColor)
+    arrow.userData.isDimensionArrow = true
+    mesh.add(arrow)
+    const mid = vertex.clone().add(dir.clone().multiplyScalar(useLen / 2))
+    const div = document.createElement('div')
+    div.className = isClosure ? 'dimension-label dimension-label-closure' : 'dimension-label'
+    div.textContent = String(useLabel)
+    div.style.color = labelText
+    div.style.backgroundColor = labelBg
+    div.style.fontSize = `${10 * (props.labelSize || 1)}px`
+    div.style.padding = '2px 6px'
+    div.style.borderRadius = '4px'
+    div.style.fontWeight = 'bold'
+    const labelObj = new CSS2DObject(div)
+    labelObj.position.copy(mid)
+    labelObj.userData.isDimensionArrow = true
+    mesh.add(labelObj)
+  })
+}
+
+function removeDimensionArrowsFromBrick(mesh) {
+  const toRemove = []
+  mesh.traverse((child) => {
+    if (child.userData?.isDimensionArrow) toRemove.push(child)
+  })
+  toRemove.forEach((obj) => {
+    mesh.remove(obj)
+    if (obj.isCSS2DObject && obj.element?.parentNode) obj.element.parentNode.removeChild(obj.element)
+  })
+}
+
+function updateDimensionsArrows() {
+  if (!wallsGroup) return
+  wallsGroup.traverse((obj) => {
+    if (obj.isMesh && obj.userData?.number != null) {
+      removeDimensionArrowsFromBrick(obj)
+      if (props.showBrickDimensions) {
+        const brickW = props.brickWidth / 1000
+        const brickH = props.brickHeight / 1000
+        const brickL = props.brickLength / 1000
+        const opts = obj.userData?.isClosure && obj.userData?.closureLengthMm != null
+          ? { isClosure: true, closureLengthMm: obj.userData.closureLengthMm, closureAxis: 'z' }
+          : {}
+        addDimensionArrowsToBrick(obj, brickW, brickH, brickL, opts)
+      }
+    }
+  })
 }
 
 // ========== ФУНДАМЕНТ (ПЛОСКОСТЬ) ==========
@@ -181,64 +256,115 @@ function cleanupLabelElements(obj) {
 }
 
 // ========== ПОЭТАПНОЕ РАСПРЕДЕЛЕНИЕ (N КИРПИЧЕЙ) ==========
-// Рисует ровно N кирпичей по периметру: центры идут один за другим (вплотную), отступ от края в сторону центра.
+// Рисует N кирпичей по периметру. При замыкании круга — новый ряд со смещением на полкирпича.
+// Замыкающий кирпич (X+Y, Y<=X): последний перед углом удлиняется до заполнения остатка.
 function buildDistributionWalls(L, W, brickW, brickL, brickH, gapM) {
-  const halfW = brickW / 2   // половина ширины кирпича — отступ вдоль стены от угла
-  const halfL = brickL / 2   // половина длины кирпича — отступ от края прямоугольника в сторону центра
-  const y = brickH / 2       // высота центра первого ряда (низ кирпича на y=0, на плоскости)
+  const halfW = brickW / 2
+  const halfL = brickL / 2
   const baseFontSize = 10 * (props.labelSize || 1)
   const n = Math.max(1, Math.floor(props.distributionBrickCount))
 
-  const step = Math.max(brickW, brickL) * brickMargin + gapM  // расстояние между центрами соседних кирпичей
+  const brickAlongPath = Math.max(brickW, brickL)
+  const halfBrickAlongPath = brickAlongPath / 2
+  const halfExtent = brickAlongPath * brickMargin / 2
+  const step = brickAlongPath * brickMargin + gapM
 
-  // Стартовая точка первого кирпича = угол + отступ (halfL, halfW), чтобы кирпич не свисал с прямоугольника.
-  // Путь: front-left (-L+halfL, -W+halfW) → front-right → back-right → back-left → front-left.
   const segs = [
-    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: -L + halfL + t * (2 * L - brickL), z: -W + halfW, wallIndex: 0, rotate90: true }) },   // front
-    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: L - halfL, z: -W + halfW + t * (2 * W - brickW), wallIndex: 1, rotate90: false }) },   // right
-    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: L - halfL - t * (2 * L - brickL), z: W - halfW, wallIndex: 2, rotate90: true }) },   // back
-    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: -L + halfL, z: W - halfW - t * (2 * W - brickW), wallIndex: 3, rotate90: false }) },   // left
+    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: -L + halfL + t * (2 * L - brickL), z: -W + halfW, wallIndex: 0, rotate90: true }) },
+    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: L - halfL, z: -W + halfW + t * (2 * W - brickW), wallIndex: 1, rotate90: false }) },
+    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: L - halfL - t * (2 * L - brickL), z: W - halfW, wallIndex: 2, rotate90: true }) },
+    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: -L + halfL, z: W - halfW - t * (2 * W - brickW), wallIndex: 3, rotate90: false }) },
   ]
 
-  // По пройденному расстоянию dist вдоль пути возвращает точку (x, z) и данные стены.
+  const perimeter = segs.reduce((sum, s) => sum + s.len, 0)
+  const segEnds = []
+  let acc = 0
+  for (let s = 0; s < segs.length; s++) {
+    if (segs[s].len > 0) acc += segs[s].len
+    segEnds.push(acc)
+  }
+  const bricksPerLap = perimeter > 1e-6 ? Math.max(1, Math.floor(perimeter / step)) : n
+
   function pointAtDistance(dist) {
-    let acc = 0
+    const d = perimeter > 1e-6 ? dist % perimeter : 0
+    let a = 0
     for (let s = 0; s < segs.length; s++) {
       if (segs[s].len <= 0) continue
-      if (acc + segs[s].len >= dist) {
-        const t = (dist - acc) / segs[s].len
+      if (a + segs[s].len >= d) {
+        const t = (d - a) / segs[s].len
         return segs[s].get(Math.min(1, Math.max(0, t)))
       }
-      acc += segs[s].len
+      a += segs[s].len
     }
     return segs[segs.length - 1].get(1)
   }
 
+  function getSegmentEnd(dist) {
+    const d = perimeter > 1e-6 ? dist % perimeter : 0
+    for (let s = 0; s < segEnds.length; s++) {
+      if (d < segEnds[s]) return segEnds[s]
+    }
+    return perimeter
+  }
+
   lastBrickGeometry = new THREE.BoxGeometry(brickW, brickH, brickL)
   lastBrickMaterial = new THREE.MeshLambertMaterial({ color: brickColor, flatShading: true })
+  closureBrickMaterial = new THREE.MeshLambertMaterial({ color: closureBrickColor, flatShading: true })
   lastEdgesGeometry = new THREE.EdgesGeometry(lastBrickGeometry)
   lastLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color(props.edgeColor), linewidth: 1 })
+  closureBrickLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#ff0000'), linewidth: 1 })
 
   for (let i = 0; i < n; i++) {
-    const dist = i * step
-    const pt = pointAtDistance(dist)
+    const row = Math.floor(i / bricksPerLap)
+    const posInLap = i % bricksPerLap
+    const offsetForRow = (row % 2) * halfBrickAlongPath
+    const dist = (offsetForRow + posInLap * step) % (perimeter || 1)
+    const y = row * (brickH + gapM) + brickH / 2
 
-    const mesh = new THREE.Mesh(lastBrickGeometry, lastBrickMaterial)
+    const segmentEnd = getSegmentEnd(dist)
+    const distFromEdgeToCorner = segmentEnd - (dist + halfExtent)   // расстояние от края кирпича до угла
+    const needClosure = distFromEdgeToCorner > 1e-6 && distFromEdgeToCorner < brickAlongPath
+    const closureLenM = needClosure ? Math.min(segmentEnd - dist + halfExtent, 2 * brickAlongPath) : null
+    const closureLen = closureLenM != null ? closureLenM / brickMargin : null
+
+    const posDist = needClosure ? dist + distFromEdgeToCorner / 2 : dist
+    const pt = pointAtDistance(posDist)
+
+    let geom = lastBrickGeometry
+    if (closureLen != null) {
+      const g = new THREE.BoxGeometry(brickW, brickH, closureLen)
+      closureGeometries.push(g)
+      geom = g
+    }
+
+    const mat = needClosure ? closureBrickMaterial : lastBrickMaterial
+    const lineMat = needClosure ? closureBrickLineMaterial : lastLineMaterial
+    const mesh = new THREE.Mesh(geom, mat)
     mesh.scale.set(brickMargin, brickMargin, brickMargin)
     mesh.castShadow = true
     mesh.receiveShadow = true
-    mesh.add(new THREE.LineSegments(lastEdgesGeometry, lastLineMaterial))
+    const edgesGeom = geom === lastBrickGeometry ? lastEdgesGeometry : new THREE.EdgesGeometry(geom)
+    if (geom !== lastBrickGeometry) closureGeometries.push(edgesGeom)
+    mesh.add(new THREE.LineSegments(edgesGeom, lineMat))
     const labelDiv = document.createElement('div')
-    labelDiv.className = 'brick-label'
+    labelDiv.className = needClosure ? 'brick-label brick-label-closure' : 'brick-label'
     labelDiv.textContent = i + 1
     labelDiv.style.fontSize = `${baseFontSize}px`
     const labelObj = new CSS2DObject(labelDiv)
     labelObj.position.set(0, 0, 0)
     labelObj.center.set(0.5, 0.5)
     mesh.add(labelObj)
-    mesh.userData = { number: i + 1, wallIndex: pt.wallIndex, labelEl: labelDiv, labelObj }
+    mesh.userData = {
+      number: i + 1,
+      wallIndex: pt.wallIndex,
+      row,
+      labelEl: labelDiv,
+      labelObj,
+      isClosure: needClosure,
+      closureLengthMm: closureLenM != null ? Math.round(closureLenM * 1000) : null,
+    }
     updateLabelVisibility(mesh, props.showAllNumbers, false)
-    if (pt.rotate90) mesh.rotation.y = Math.PI / 2   // фронт/зад — кирпич длинной стороной вдоль стены
+    if (pt.rotate90) mesh.rotation.y = Math.PI / 2
     mesh.position.set(pt.x, y, pt.z)
     wallsGroup.add(mesh)
   }
@@ -257,6 +383,10 @@ function buildWalls() {
   lastBrickMaterial?.dispose()
   lastEdgesGeometry?.dispose()
   lastLineMaterial?.dispose()
+  closureBrickMaterial?.dispose()
+  closureBrickLineMaterial?.dispose()
+  closureGeometries.forEach((g) => g.dispose())
+  closureGeometries = []
 
   const L = props.houseLength / 2   // половина длины дома (м), край плоскости по X
   const W = props.houseWidth / 2    // половина ширины дома (м), край плоскости по Z
@@ -286,22 +416,24 @@ function buildWalls() {
 
   lastBrickGeometry = new THREE.BoxGeometry(brickW, brickH, brickL)
   lastBrickMaterial = new THREE.MeshLambertMaterial({ color: brickColor, flatShading: true })
+  closureBrickMaterial = new THREE.MeshLambertMaterial({ color: closureBrickColor, flatShading: true })
   lastEdgesGeometry = new THREE.EdgesGeometry(lastBrickGeometry)
   lastLineMaterial = new THREE.LineBasicMaterial({
     color: new THREE.Color(props.edgeColor),
     linewidth: 1,
   })
+  closureBrickLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#ff0000'), linewidth: 1 })
 
   // Стартовая точка первого кирпича каждой стены = угол + отступ (halfL, halfW), чтобы не свисал с прямоугольника.
   const halfL = brickL / 2
   const halfW = brickW / 2
 
-  // startX, startZ — центр первого кирпича на стене; axis и sign задают направление роста номера (along).
+  // startX, startZ — центр первого кирпича; segmentLen — длина стены; замыкающий кирпич = X+Y, Y<=X (макс 2X).
   const walls = [
-    { bricks: bricksFront, startX: -L + halfL, startZ: -W + halfW, axis: 'x', sign: 1, rotate90: true },   // front: от (-L+halfL,-W+halfW) вправо
-    { bricks: bricksRight, startX: L - halfL, startZ: -W + halfW, axis: 'z', sign: 1, rotate90: false },   // right: вглубь +Z
-    { bricks: bricksFront, startX: L - halfL, startZ: W - halfW, axis: 'x', sign: -1, rotate90: true },    // back: влево
-    { bricks: bricksRight, startX: -L + halfL, startZ: W - halfW, axis: 'z', sign: -1, rotate90: false }, // left: к фронту -Z
+    { bricks: bricksFront, startX: -L + halfL, startZ: -W + halfW, axis: 'x', sign: 1, rotate90: true, segmentLen: 2 * L - brickL },
+    { bricks: bricksRight, startX: L - halfL, startZ: -W + halfW, axis: 'z', sign: 1, rotate90: false, segmentLen: 2 * W - brickW },
+    { bricks: bricksFront, startX: L - halfL, startZ: W - halfW, axis: 'x', sign: -1, rotate90: true, segmentLen: 2 * L - brickL },
+    { bricks: bricksRight, startX: -L + halfL, startZ: W - halfW, axis: 'z', sign: -1, rotate90: false, segmentLen: 2 * W - brickW },
   ]
 
   let brickNumber = 1
@@ -310,6 +442,9 @@ function buildWalls() {
 
   const extentAlongWall = Math.max(brickW, brickL) * brickMargin
   const stepAlong = extentAlongWall + gapM   // шаг между центрами вдоль стены (без проникновения)
+
+  // X = размер кирпича вдоль стены; Y = остаток до угла; замыкающий кирпич = X+Y, Y<=X (макс 2X).
+  const extentBrick = (w) => (w.rotate90 ? brickL : brickW)
 
   for (let row = 0; row < rowsCount; row++) {
     const y = row * (brickH + gapM) + brickH / 2   // центр кирпича по высоте (низ на плоскости при row=0)
@@ -321,16 +456,37 @@ function buildWalls() {
         const isLastInRow = posInRow === bricksInRow - 1
         posInRow++
 
-        const mesh = new THREE.Mesh(lastBrickGeometry, lastBrickMaterial)
+        const isLastOnWall = col === wall.bricks - 1
+        const X = extentBrick(wall)
+        const halfX = (X * brickMargin) / 2
+        const lastCenterAlong = (wall.bricks - 1) * stepAlong
+        const lastFarEdge = lastCenterAlong + halfX
+        const distFromEdgeToCorner = wall.segmentLen - lastFarEdge   // расстояние от края кирпича до угла
+        const needClosure = isLastOnWall && distFromEdgeToCorner > 1e-6 && distFromEdgeToCorner < X
+        const closureLenM = needClosure ? Math.min(wall.segmentLen - lastCenterAlong + halfX, 2 * X) : null
+        const closureLen = closureLenM != null ? closureLenM / brickMargin : null
+
+        let geom = lastBrickGeometry
+        if (closureLen != null) {
+          const g = new THREE.BoxGeometry(brickW, brickH, closureLen)
+          closureGeometries.push(g)
+          geom = g
+        }
+
+        const mat = needClosure ? closureBrickMaterial : lastBrickMaterial
+        const lineMat = needClosure ? closureBrickLineMaterial : lastLineMaterial
+        const mesh = new THREE.Mesh(geom, mat)
         mesh.scale.set(brickMargin, brickMargin, brickMargin)
         mesh.castShadow = true
         mesh.receiveShadow = true
 
-        const edges = new THREE.LineSegments(lastEdgesGeometry, lastLineMaterial)
+        const edgesGeom = geom === lastBrickGeometry ? lastEdgesGeometry : new THREE.EdgesGeometry(geom)
+        if (geom !== lastBrickGeometry) closureGeometries.push(edgesGeom)
+        const edges = new THREE.LineSegments(edgesGeom, lineMat)
         mesh.add(edges)
 
         const labelDiv = document.createElement('div')
-        labelDiv.className = 'brick-label'
+        labelDiv.className = needClosure ? 'brick-label brick-label-closure' : 'brick-label'
         labelDiv.textContent = brickNumber
         labelDiv.style.fontSize = `${baseFontSize}px`
         const labelObj = new CSS2DObject(labelDiv)
@@ -345,17 +501,21 @@ function buildWalls() {
           wallIndex,
           labelEl: labelDiv,
           labelObj,
+          isClosure: needClosure,
+          closureLengthMm: closureLenM != null ? Math.round(closureLenM * 1000) : null,
         }
         brickNumber++
 
         updateLabelVisibility(mesh, props.showAllNumbers, false)
 
-        // Позиция: старт стены (угол + halfL, halfW) + сдвиг вдоль стены на col * stepAlong
+        // Позиция: центр смещён на distFromEdgeToCorner/2 к углу для замыкающего кирпича (отталкивание от предыдущего)
+        const posOffset = needClosure ? distFromEdgeToCorner / 2 : 0
+        const along = col * stepAlong + posOffset
         if (wall.rotate90) mesh.rotation.y = Math.PI / 2
         if (wall.axis === 'x') {
-          mesh.position.set(wall.startX + wall.sign * col * stepAlong, y, wall.startZ)
+          mesh.position.set(wall.startX + wall.sign * along, y, wall.startZ)
         } else {
-          mesh.position.set(wall.startX, y, wall.startZ + wall.sign * col * stepAlong)
+          mesh.position.set(wall.startX, y, wall.startZ + wall.sign * along)
         }
         wallsGroup.add(mesh)
       }
@@ -436,6 +596,7 @@ function onPointerLeave() {
 function updateScene() {
   addGround()
   buildWalls()
+  updateDimensionsArrows()
 }
 
 function animate() {
@@ -517,6 +678,12 @@ watch(
   (newVal) => updateAllLabelsVisibility(newVal),
   { immediate: true }
 )
+// Стрелки размеров кирпича: обновляем при смене галочки (без пересборки сцены).
+watch(
+  () => props.showBrickDimensions,
+  () => updateDimensionsArrows(),
+  { immediate: true }
+)
 </script>
 
 <style scoped>
@@ -549,5 +716,23 @@ watch(
 :deep(.brick-label.brick-label-hover) {
   background: #1b5e20;
   color: #fff;
+}
+
+:deep(.brick-label.brick-label-closure),
+:deep(.brick-label.brick-label-closure.brick-label-hover) {
+  background: #ff0000 !important;
+  color: #fff !important;
+}
+
+/* Подписи размеров кирпича (стрелки X, Y, Z): чёрный текст на оранжевом фоне */
+:deep(.dimension-label) {
+  color: #000 !important;
+  background: #e67e22 !important;
+  white-space: nowrap;
+}
+
+:deep(.dimension-label.dimension-label-closure) {
+  color: #fff !important;
+  background: #ff0000 !important;
 }
 </style>

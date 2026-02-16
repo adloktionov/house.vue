@@ -76,6 +76,17 @@
       </label>
     </div>
     <div class="field-group">
+      <label class="checkbox-label">
+        <input
+          type="checkbox"
+          class="checkbox-input"
+          :checked="showBrickDimensions"
+          @change="emit('update:showBrickDimensions', ($event.target).checked)"
+        />
+        Показать размеры кирпича
+      </label>
+    </div>
+    <div class="field-group">
       <label>Размер лейбла кирпича</label>
       <div class="input-row">
         <Slider v-model="localLabelSize" :min="0.5" :max="2" :step="0.1" class="slider" />
@@ -116,6 +127,7 @@ const props = defineProps({
   edgeColor: { type: String, default: '#00ff00' },
   groundColor: { type: String, default: '#4a5568' },
   showAllNumbers: { type: Boolean, default: false },
+  showBrickDimensions: { type: Boolean, default: false },
   labelSize: { type: Number, default: 1 },
 })
 
@@ -129,6 +141,7 @@ const emit = defineEmits([
   'update:edgeColor',
   'update:groundColor',
   'update:showAllNumbers',
+  'update:showBrickDimensions',
   'update:labelSize',
 ])
 
