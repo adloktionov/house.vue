@@ -13,6 +13,7 @@
           v-model:brick-length="brickLength"
           v-model:brick-width="brickWidth"
           v-model:brick-height="brickHeight"
+          v-model:brick-gap="brickGap"
           v-model:rows="rows"
           :wall-height="wallHeight"
         />
@@ -25,6 +26,7 @@
           :brick-width="brickWidth"
           :brick-length="brickLength"
           :brick-height="brickHeight"
+          :brick-gap="brickGap"
           :bricks-per-row="bricksPerRow"
           :rows="rows"
         />
@@ -36,6 +38,7 @@
           <p>Длина: {{ brickLength }} мм</p>
           <p>Ширина: {{ brickWidth }} мм</p>
           <p>Высота: {{ brickHeight }} мм</p>
+          <p>Зазор: {{ brickGap }} мм</p>
         </div>
         <div class="info-block">
           <h3>Ряды / Высота</h3>
@@ -70,16 +73,17 @@ const houseWidth = ref(10)
 const brickLength = ref(250)
 const brickWidth = ref(120)
 const brickHeight = ref(65)
+const brickGap = ref(2)
 
 // Количество рядов
 const rows = ref(10)
 
-// Вычисляемые значения
+// Вычисляемые значения (с учётом зазоров)
 const perimeter = computed(() => 2 * (houseLength.value + houseWidth.value))
-const brickRowLengthM = computed(() => brickWidth.value / 1000)
+const brickRowLengthM = computed(() => (brickWidth.value + brickGap.value) / 1000)
 const bricksPerRow = computed(() => Math.ceil(perimeter.value / brickRowLengthM.value))
 const totalBricks = computed(() => bricksPerRow.value * rows.value)
-const wallHeight = computed(() => rows.value * (brickHeight.value / 1000))
+const wallHeight = computed(() => rows.value * (brickHeight.value + brickGap.value) / 1000)
 </script>
 
 <style scoped>
