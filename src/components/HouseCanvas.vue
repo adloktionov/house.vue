@@ -26,17 +26,21 @@ const props = defineProps({
   groundColor: { type: String, default: '#4a5568' }, // цвет плоскости фундамента
   showAllNumbers: { type: Boolean, default: false }, // показывать все номера или только при hover
   showBrickDimensions: { type: Boolean, default: false }, // стрелки X, Y, Z с размерами кирпича
+  showBrickDistances: { type: Boolean, default: false },  // показывать расстояния между кирпичами
   labelSize: { type: Number, default: 1 },        // масштаб подписи (0.5–2)
   bricksPerRow: { type: Number, default: 0 },     // всего кирпичей в одном ряду по периметру
   rows: { type: Number, default: 10 },             // количество рядов
   distributionBrickCount: { type: Number, default: 0 }, // 0 = полная кладка, >0 = режим «N кирпичей»
 })
 
+const emit = defineEmits(['brick-distances', 'brick-hover', 'camera-position'])
+
 // ========== ССЫЛКИ И ПЕРЕМЕННЫЕ ==========
 const containerRef = ref(null)                    // div, куда монтируются canvas'ы
 let scene, camera, renderer, labelRenderer, controls, wallsGroup, groundMesh
 let raycaster, mouse                               // луч из камеры для определения кирпича под курсором
 let hoveredBrickMesh = null                        // меш кирпича, над которым сейчас курсор
+let stripeOverlayMesh = null                       // полосатый оверлей на hover-кирпиче
 let lastBrickGeometry, lastBrickMaterial           // одна геометрия/материал на все кирпичи (экономия памяти)
 let lastEdgesGeometry, lastLineMaterial            // рёбра кирпичей (контур), общие для всех
 let closureBrickMaterial, closureBrickLineMaterial // красные для замыкающих кирпичей
@@ -46,6 +50,10 @@ let animationId = null                             // id requestAnimationFrame �
 
 const brickColor = 0xc75c3d                        // цвет меша кирпича (оранжево-красный)
 const brickMargin = 0.97                           // масштаб меша: 0.97 = визуальный зазор ~3% между кирпичами
+
+const DEFAULT_CAM_POS = { x: 20, y: 12, z: 20 }
+let fourViewMode = false
+let camTop, camFront, camRight
 
 const MAX_DISPLAY_ROWS = 25                        // не рисовать больше рядов (производительность)
 const MAX_BRICKS_PER_WALL = 80                     // макс. кирпичей на одну стену
@@ -60,7 +68,7 @@ function init() {
   const w = containerRef.value.clientWidth || 500
   const h = containerRef.value.clientHeight || 450
   camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 1000)
-  camera.position.set(20, 12, 20)                   // точка обзора
+  camera.position.set(DEFAULT_CAM_POS.x, DEFAULT_CAM_POS.y, DEFAULT_CAM_POS.z)
   camera.lookAt(0, 0, 0)
 
   renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -214,6 +222,55 @@ const WALL_DIRECTIONS = [
   new THREE.Vector3(0, 0, -1),
 ]
 
+// Вычисляет расстояние между соседними кирпичами (зазор в мм). Возвращает массив { from, to, gapMm, overlapMm? }.
+function getBrickDistances() {
+  if (!wallsGroup) return []
+  const meshes = []
+  wallsGroup.traverse((obj) => {
+    if (obj.isMesh && obj.userData?.number != null && obj.userData?.wallIndex != null) {
+      meshes.push(obj)
+    }
+  })
+  meshes.sort((a, b) => (a.userData.number ?? 0) - (b.userData.number ?? 0))
+  const WALL_DIRS = [
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(-1, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  ]
+  const results = []
+  for (let i = 0; i < meshes.length - 1; i++) {
+    const m1 = meshes[i]
+    const m2 = meshes[i + 1]
+    const n1 = m1.userData.number
+    const n2 = m2.userData.number
+    const box1 = new THREE.Box3().setFromObject(m1)
+    const box2 = new THREE.Box3().setFromObject(m2)
+    const center1 = new THREE.Vector3()
+    const center2 = new THREE.Vector3()
+    box1.getCenter(center1)
+    box2.getCenter(center2)
+    const v = center2.clone().sub(center1)
+    const w1 = m1.userData.wallIndex ?? 0
+    const w2 = m2.userData.wallIndex ?? 0
+    const dir = WALL_DIRS[w1]
+    const proj = v.dot(dir)
+    const size1 = box1.getSize(new THREE.Vector3())
+    const size2 = box2.getSize(new THREE.Vector3())
+    const half1 = (w1 === 0 || w1 === 2 ? size1.x : size1.z) / 2
+    const half2 = (w2 === 0 || w2 === 2 ? size2.x : size2.z) / 2
+    const gap = Math.abs(proj) - half1 - half2
+    const gapMm = Math.round(gap * 1000)
+    results.push({
+      from: n1,
+      to: n2,
+      gapMm: gapMm,
+      overlapMm: gap < 0 ? Math.abs(gapMm) : undefined,
+    })
+  }
+  return results
+}
+
 // Устраняет пересечение двух кирпичей: сдвигаем кирпич с большим номером на halfLength вдоль своей стены.
 function fixIntersections(brickL, brickMargin) {
   if (!wallsGroup) return
@@ -236,7 +293,14 @@ function fixIntersections(brickL, brickMargin) {
         boxB.setFromObject(meshes[j])
         if (!boxA.intersectsBox(boxB)) continue
 
-        const [toShift] = meshes[i].userData.number > meshes[j].userData.number ? [meshes[i], meshes[j]] : [meshes[j], meshes[i]]
+        // Пара «замыкающий + следующий» уже размещена с зазором 1–3 мм — не сдвигать
+        const ni = meshes[i].userData.number
+        const nj = meshes[j].userData.number
+        const closureA = !!meshes[i].userData?.isClosure
+        const closureB = !!meshes[j].userData?.isClosure
+        if (Math.abs(ni - nj) === 1 && (closureA || closureB)) continue
+
+        const [toShift] = ni > nj ? [meshes[i], meshes[j]] : [meshes[j], meshes[i]]
         const dir = WALL_DIRECTIONS[toShift.userData.wallIndex].clone()
         toShift.position.add(dir.multiplyScalar(halfLength))
         fixed = true
@@ -268,12 +332,15 @@ function buildDistributionWalls(L, W, brickW, brickL, brickH, gapM) {
   const halfBrickAlongPath = brickAlongPath / 2
   const halfExtent = brickAlongPath * brickMargin / 2
   const step = brickAlongPath * brickMargin + gapM
+  // Зазор между замыкающим и следующим кирпичом — 1–3 мм (вплотную)
+  const closureGapM = Math.min(Math.max(gapM, 0.001), 0.003)
 
+  // Траектория по краю плоскости (без выравнивания по центру). Центры кирпичей смещаются внутрь при размещении.
   const segs = [
-    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: -L + halfL + t * (2 * L - brickL), z: -W + halfW, wallIndex: 0, rotate90: true }) },
-    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: L - halfL, z: -W + halfW + t * (2 * W - brickW), wallIndex: 1, rotate90: false }) },
-    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: L - halfL - t * (2 * L - brickL), z: W - halfW, wallIndex: 2, rotate90: true }) },
-    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: -L + halfL, z: W - halfW - t * (2 * W - brickW), wallIndex: 3, rotate90: false }) },
+    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: -L + halfL + t * (2 * L - brickL), z: -W, wallIndex: 0, rotate90: true }) },
+    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: L, z: -W + halfW + t * (2 * W - brickW), wallIndex: 1, rotate90: false }) },
+    { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: L - halfL - t * (2 * L - brickL), z: W, wallIndex: 2, rotate90: true }) },
+    { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: -L, z: W - halfW - t * (2 * W - brickW), wallIndex: 3, rotate90: false }) },
   ]
 
   const perimeter = segs.reduce((sum, s) => sum + s.len, 0)
@@ -307,6 +374,27 @@ function buildDistributionWalls(L, W, brickW, brickL, brickH, gapM) {
     return perimeter
   }
 
+  function getSegmentIndex(dist) {
+    const d = perimeter > 1e-6 ? dist % perimeter : 0
+    for (let s = 0; s < segEnds.length; s++) {
+      if (d < segEnds[s]) return s
+    }
+    return segEnds.length - 1
+  }
+
+  function getCornerDist(dist) {
+    const s = getSegmentIndex(dist)
+    const ext = (s === 0 || s === 2) ? halfL : halfW
+    return segEnds[s] + ext
+  }
+
+  function getPrevSegmentCornerDist(segIndex) {
+    if (segIndex <= 0) return 0
+    // ext берём от ПРЕДЫДУЩЕГО сегмента: сегменты 0,2 имеют brickL вдоль пути → halfL; 1,3 — brickW → halfW
+    const ext = (segIndex === 1 || segIndex === 3) ? halfL : halfW
+    return segEnds[segIndex - 1] + ext
+  }
+
   lastBrickGeometry = new THREE.BoxGeometry(brickW, brickH, brickL)
   lastBrickMaterial = new THREE.MeshLambertMaterial({ color: brickColor, flatShading: true })
   closureBrickMaterial = new THREE.MeshLambertMaterial({ color: closureBrickColor, flatShading: true })
@@ -318,16 +406,55 @@ function buildDistributionWalls(L, W, brickW, brickL, brickH, gapM) {
     const row = Math.floor(i / bricksPerLap)
     const posInLap = i % bricksPerLap
     const offsetForRow = (row % 2) * halfBrickAlongPath
-    const dist = (offsetForRow + posInLap * step) % (perimeter || 1)
-    const y = row * (brickH + gapM) + brickH / 2
+    let dist = (offsetForRow + posInLap * step) % (perimeter || 1)
+    // Зазор между рядами — 1–3 мм (замыкающий и следующий ряд вплотную)
+    const y = row * (brickH + closureGapM) + brickH / 2
 
     const segmentEnd = getSegmentEnd(dist)
-    const distFromEdgeToCorner = segmentEnd - (dist + halfExtent)   // расстояние от края кирпича до угла
-    const needClosure = distFromEdgeToCorner > 1e-6 && distFromEdgeToCorner < brickAlongPath
-    const closureLenM = needClosure ? Math.min(segmentEnd - dist + halfExtent, 2 * brickAlongPath) : null
+    const segIndex = getSegmentIndex(dist)
+    const cornerDist = getCornerDist(dist)
+
+    // Если мы первый кирпич сегмента и предыдущий сегмент закончился замыкающим — сдвигаем, чтобы не пересекаться
+    // Используем halfExtentCurrent — полудлину кирпича именно на этом сегменте (seg 0,2: brickL; seg 1,3: brickW)
+
+
+    
+     // ——— Первый кирпич нового сегмента после замыкающего ———
+    // Если мы в сегменте 1–3, предыдущий кирпич мог быть замыкающим на углу.
+    // Замыкающий удлиняется до угла, следующий кирпич сдвигается, чтобы не пересекаться.
+    if (segIndex > 0) {
+      // Индекс предыдущего кирпича в ряду: для первого в ряду — последний предыдущего ряда
+      const posInLapPrev = posInLap === 0 ? bricksPerLap - 1 : posInLap - 1
+      // Путевая позиция центра предыдущего кирпича (как будто он обычный, не замыкающий)
+      const distPrev = (offsetForRow + posInLapPrev * step) % (perimeter || 1)
+      // Предыдущий кирпич лежит в предыдущем сегменте (не перешёл через угол)
+      if (distPrev < segEnds[segIndex - 1]) {
+        // Путевое расстояние до физического угла (замыкающий заканчивается здесь)
+        const cornerDistPrev = getPrevSegmentCornerDist(segIndex)
+        // Расстояние от края предыдущего кирпича до угла — критерий «замыкающий»
+        const distFromEdgePrev = cornerDistPrev - (distPrev + halfExtent)
+        const prevWasClosure = distFromEdgePrev > 1e-6 && distFromEdgePrev < brickAlongPath
+        // Полудлина кирпича вдоль пути для ТЕКУЩЕГО сегмента (seg 0,2: brickL; seg 1,3: brickW)
+        const halfExtentCurrent = (segIndex === 0 || segIndex === 2) ? halfL * brickMargin : halfW * brickMargin
+        // Если предыдущий — замыкающий и текущий кирпич перекрыл бы его — сдвигаем за угол, чтобы не пересекаться.
+        // Зазор между замыкающим и следующим — 1–3 мм (closureGapM).
+        if (prevWasClosure && dist - halfExtentCurrent < cornerDistPrev) {
+          dist = cornerDistPrev + halfExtentCurrent + closureGapM
+        }
+      }
+    }
+    // halfExtentSeg — полудлина кирпича вдоль пути на ЭТОМ сегменте (seg 0,2: brickL; seg 1,3: brickW)
+    const halfExtentSeg = (segIndex === 0 || segIndex === 2) ? halfL * brickMargin : halfW * brickMargin
+    const distFromEdgeToCorner = cornerDist - (dist + halfExtentSeg)
+    const brickExtentSeg = (segIndex === 0 || segIndex === 2) ? brickL : brickW
+    const needClosure = distFromEdgeToCorner > 1e-6 && distFromEdgeToCorner < brickExtentSeg
+
+    // Длина: от начала кирпича до физического угла (используем halfExtentSeg, чтобы не залезать в предыдущий)
+    const closureLenM = needClosure ? Math.min(cornerDist - (dist - halfExtentSeg), 2 * brickAlongPath) : null
     const closureLen = closureLenM != null ? closureLenM / brickMargin : null
 
-    const posDist = needClosure ? dist + distFromEdgeToCorner / 2 : dist
+    // Центр: середина между началом кирпича и углом стены
+    const posDist = needClosure ? (dist - halfExtentSeg + cornerDist) / 2 : dist
     const pt = pointAtDistance(posDist)
 
     let geom = lastBrickGeometry
@@ -365,7 +492,13 @@ function buildDistributionWalls(L, W, brickW, brickL, brickH, gapM) {
     }
     updateLabelVisibility(mesh, props.showAllNumbers, false)
     if (pt.rotate90) mesh.rotation.y = Math.PI / 2
-    mesh.position.set(pt.x, y, pt.z)
+    // Траектория идёт по краю; смещаем центр внутрь. BoxGeometry(brickW,brickH,brickL): X=brickW, Z=brickL.
+    // Seg 1,3: без поворота → X=brickW (перпендикуляр пути Z); Seg 0,2: rotate90 → Z=brickW (перпендикуляр пути X)
+    const halfExtX = (pt.wallIndex === 1 || pt.wallIndex === 3) ? halfW * brickMargin : 0
+    const halfExtZ = (pt.wallIndex === 0 || pt.wallIndex === 2) ? halfW * brickMargin : 0
+    const dx = (pt.wallIndex === 1 ? -halfExtX : pt.wallIndex === 3 ? halfExtX : 0)
+    const dz = (pt.wallIndex === 0 ? halfExtZ : pt.wallIndex === 2 ? -halfExtZ : 0)
+    mesh.position.set(pt.x + dx, y, pt.z + dz)
     wallsGroup.add(mesh)
   }
 
@@ -424,7 +557,7 @@ function buildWalls() {
   })
   closureBrickLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#ff0000'), linewidth: 1 })
 
-  // Стартовая точка первого кирпича каждой стены = угол + отступ (halfL, halfW), чтобы не свисал с прямоугольника.
+  // Кирпичи прижаты к краю плоскости; центр первого кирпича смещён внутрь на halfL, halfW
   const halfL = brickL / 2
   const halfW = brickW / 2
 
@@ -456,14 +589,38 @@ function buildWalls() {
         const isLastInRow = posInRow === bricksInRow - 1
         posInRow++
 
+        // Проверяем: является ли кирпич последним на стене
         const isLastOnWall = col === wall.bricks - 1
+
+        // X — размер кирпича вдоль стены (ширина или длина в зависимости от ориентации)
         const X = extentBrick(wall)
+        // halfX — половина размера кирпича вдоль стены с учетом отступа (brickMargin)
         const halfX = (X * brickMargin) / 2
+
+        // lastCenterAlong — позиция центра последнего кирпича на стене (без замыкающего)
         const lastCenterAlong = (wall.bricks - 1) * stepAlong
+
+        // lastFarEdge — крайняя точка последнего кирпича (от начала стены)
         const lastFarEdge = lastCenterAlong + halfX
-        const distFromEdgeToCorner = wall.segmentLen - lastFarEdge   // расстояние от края кирпича до угла
+
+        // distFromEdgeToCorner — расстояние от края последнего кирпича до угла стены
+        const cornerExt = wall.rotate90 ? halfL : halfW
+        const cornerLen = wall.segmentLen + cornerExt
+        const distFromEdgeToCorner = cornerLen - lastFarEdge
+
+        // needClosure — надо ли рисовать “замыкающий” (обрезанный) кирпич
+        // Условия: последний кирпич на стене и его край не достаёт до угла (но выступает менее чем на один весь кирпич)
         const needClosure = isLastOnWall && distFromEdgeToCorner > 1e-6 && distFromEdgeToCorner < X
-        const closureLenM = needClosure ? Math.min(wall.segmentLen - lastCenterAlong + halfX, 2 * X) : null
+
+        // closureLenM — длина замыкающего кирпича (в метрах), но не больше двойной длины обычного кирпича (на всякий случай)
+        // closureLenM — фактическая длина замыкающего кирпича в метрах. 
+        // Если needClosure (т.е. требуется замыкание), то вычисляем длину так:
+        // wall.segmentLen - lastCenterAlong + halfX: расстояние от начала стены до конца предполагаемого замыкающего кирпича.
+        // Мы берём минимум между этим расстоянием и двойной длиной стандартного кирпича (2 * X), чтобы избежать слишком длинного кирпича (например, если допущена ошибка в вычислениях или сложная геометрия стены).
+        // Если замыкающий кирпич не нужен (needClosure === false), то длина null.
+        const closureLenM = needClosure ? Math.min(cornerLen - lastCenterAlong + halfX, 2 * X) : null
+
+        // closureLen — длина замыкающего кирпича, откорректированная на отступ brickMargin
         const closureLen = closureLenM != null ? closureLenM / brickMargin : null
 
         let geom = lastBrickGeometry
@@ -565,6 +722,111 @@ function updateAllLabelsVisibility(showAll) {
   })
 }
 
+// Собирает данные кирпича для UXUI панели (при наведении).
+function buildBrickHoverData(mesh, distances) {
+  if (!mesh?.userData) return null
+  const n = mesh.userData.number
+  const isClosure = !!mesh.userData.isClosure
+  const closureMm = mesh.userData.closureLengthMm
+  const brickW = props.brickWidth
+  const brickL = props.brickLength
+  const brickH = props.brickHeight
+  const dims = closureMm != null
+    ? `${brickW}×${brickH}×${closureMm} мм`
+    : `${brickW}×${brickL}×${brickH} мм`
+  const distToPrev = distances?.find((d) => d.to === n) ?? null
+  const distToNext = distances?.find((d) => d.from === n) ?? null
+  return {
+    number: n,
+    dimensions: dims,
+    isClosure,
+    distToPrev,
+    distToNext,
+  }
+}
+
+// Полосатый оверлей для hover-кирпича (двигающиеся ч/б полосы).
+function createStripeOverlay(geometry) {
+  const uniforms = { time: { value: 0 } }
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    side: THREE.DoubleSide,
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float time;
+      varying vec2 vUv;
+      void main() {
+        float stripe = mod(vUv.x * 12.0 + time * 4.0, 1.0);
+        float a = stripe < 0.5 ? 0.35 : 0.2;
+        vec3 col = stripe < 0.5 ? vec3(0,0,0) : vec3(1,1,1);
+        gl_FragColor = vec4(col, a);
+      }
+    `,
+  })
+  const mesh = new THREE.Mesh(geometry, mat)
+  mesh.renderOrder = 1
+  mesh.userData.stripeUniforms = uniforms
+  return mesh
+}
+
+// ========== УПРАВЛЕНИЕ КАМЕРОЙ ==========
+const CAM_DIST = 25
+
+function setCameraViewX() {
+  if (!camera || !controls) return
+  camera.position.set(CAM_DIST, 0, 0)
+  controls.target.set(0, 0, 0)
+  controls.update()
+}
+
+function setCameraViewY() {
+  if (!camera || !controls) return
+  camera.position.set(0, CAM_DIST, 0)
+  controls.target.set(0, 0, 0)
+  controls.update()
+}
+
+function setCameraViewZ() {
+  if (!camera || !controls) return
+  camera.position.set(0, 0, CAM_DIST)
+  controls.target.set(0, 0, 0)
+  controls.update()
+}
+
+function resetCamera() {
+  if (!camera || !controls) return
+  camera.position.set(DEFAULT_CAM_POS.x, DEFAULT_CAM_POS.y, DEFAULT_CAM_POS.z)
+  controls.target.set(0, 0, 0)
+  controls.update()
+}
+
+function setFourViewMode(enabled) {
+  fourViewMode = !!enabled
+  if (fourViewMode && scene) {
+    if (!camTop) camTop = new THREE.PerspectiveCamera(50, 1, 0.1, 1000)
+    if (!camFront) camFront = new THREE.PerspectiveCamera(50, 1, 0.1, 1000)
+    if (!camRight) camRight = new THREE.PerspectiveCamera(50, 1, 0.1, 1000)
+  }
+}
+
+function removeStripeOverlay() {
+  if (stripeOverlayMesh?.parent) {
+    stripeOverlayMesh.parent.remove(stripeOverlayMesh)
+    stripeOverlayMesh.geometry?.dispose?.()
+    stripeOverlayMesh.material?.dispose?.()
+  }
+  stripeOverlayMesh = null
+}
+
 // Курсор движется: переводим координаты в -1..1, пускаем луч, находим первый пересечённый меш — это hover-кирпич.
 function onPointerMove(event) {
   if (!containerRef.value || !camera || !wallsGroup) return
@@ -572,38 +834,125 @@ function onPointerMove(event) {
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(mouse, camera)
-  const intersects = raycaster.intersectObjects(wallsGroup.children)
-  const hit = intersects[0]?.object
+  const intersects = raycaster.intersectObjects(wallsGroup.children, true)
+  let hitObj = intersects[0]?.object
+  while (hitObj && hitObj.userData?.number == null) hitObj = hitObj.parent
+  const hit = hitObj?.userData?.number != null ? hitObj : null
   if (hit !== hoveredBrickMesh) {
     if (hoveredBrickMesh?.userData?.labelEl) {
       updateLabelVisibility(hoveredBrickMesh, props.showAllNumbers, false)
     }
+    removeStripeOverlay()
     hoveredBrickMesh = hit || null
     if (hoveredBrickMesh?.userData?.labelEl) {
       updateLabelVisibility(hoveredBrickMesh, props.showAllNumbers, true)
     }
+    if (hoveredBrickMesh?.geometry) {
+      const geo = hoveredBrickMesh.geometry.clone()
+      stripeOverlayMesh = createStripeOverlay(geo)
+      hoveredBrickMesh.add(stripeOverlayMesh)
+    }
+    wallsGroup.updateMatrixWorld(true)
+    const distances = getBrickDistances()
+    const data = hoveredBrickMesh ? buildBrickHoverData(hoveredBrickMesh, distances) : null
+    emit('brick-hover', { data, pointerX: event.clientX, pointerY: event.clientY })
+  } else if (hoveredBrickMesh) {
+    const distances = getBrickDistances()
+    const data = buildBrickHoverData(hoveredBrickMesh, distances)
+    emit('brick-hover', { data, pointerX: event.clientX, pointerY: event.clientY })
   }
 }
 
-// Курсор покинул контейнер — снимаем подсветку номера.
+// Курсор покинул контейнер — снимаем подсветку номера и UXUI.
 function onPointerLeave() {
   if (hoveredBrickMesh?.userData?.labelEl) {
     updateLabelVisibility(hoveredBrickMesh, props.showAllNumbers, false)
   }
+  removeStripeOverlay()
   hoveredBrickMesh = null
+  emit('brick-hover', { data: null, pointerX: 0, pointerY: 0 })
 }
 
 function updateScene() {
   addGround()
   buildWalls()
   updateDimensionsArrows()
+  if (props.showBrickDistances) {
+    wallsGroup?.updateMatrixWorld?.(true)
+    const distances = getBrickDistances()
+    emit('brick-distances', distances)
+  }
 }
 
+let lastCameraEmit = 0
 function animate() {
   animationId = requestAnimationFrame(animate)
   controls.update()
-  renderer.render(scene, camera)
+  if (stripeOverlayMesh?.userData?.stripeUniforms) {
+    stripeOverlayMesh.userData.stripeUniforms.time.value = performance.now() * 0.001
+  }
+  if (fourViewMode && renderer && containerRef.value) {
+    const w = containerRef.value.clientWidth || 500
+    const h = containerRef.value.clientHeight || 450
+    const hw = w / 2
+    const hh = h / 2
+    const origVP = renderer.getViewport(new THREE.Vector4())
+    const origClear = renderer.getClearColor(new THREE.Color())
+    renderer.setScissorTest(true)
+    renderer.setClearColor(0x1a2332, 1)
+    if (camTop) {
+      camTop.position.set(0, CAM_DIST, 0)
+      camTop.lookAt(0, 0, 0)
+      camTop.aspect = hw / hh
+      camTop.updateProjectionMatrix()
+      renderer.setViewport(0, hh, hw, hh)
+      renderer.setScissor(0, hh, hw, hh)
+      renderer.clear()
+      renderer.render(scene, camTop)
+    }
+    if (camFront) {
+      camFront.position.set(0, 0, CAM_DIST)
+      camFront.lookAt(0, 0, 0)
+      camFront.aspect = hw / hh
+      camFront.updateProjectionMatrix()
+      renderer.setViewport(hw, hh, hw, hh)
+      renderer.setScissor(hw, hh, hw, hh)
+      renderer.clear()
+      renderer.render(scene, camFront)
+    }
+    if (camRight) {
+      camRight.position.set(CAM_DIST, 0, 0)
+      camRight.lookAt(0, 0, 0)
+      camRight.aspect = hw / hh
+      camRight.updateProjectionMatrix()
+      renderer.setViewport(0, 0, hw, hh)
+      renderer.setScissor(0, 0, hw, hh)
+      renderer.clear()
+      renderer.render(scene, camRight)
+    }
+    camera.aspect = hw / hh
+    camera.updateProjectionMatrix()
+    renderer.setViewport(hw, 0, hw, hh)
+    renderer.setScissor(hw, 0, hw, hh)
+    renderer.clear()
+    renderer.render(scene, camera)
+    renderer.setScissorTest(false)
+    renderer.setViewport(origVP.x, origVP.y, origVP.z, origVP.w)
+    renderer.setClearColor(origClear)
+  } else {
+    const w = containerRef.value?.clientWidth || 500
+    const h = Math.max(containerRef.value?.clientHeight || 450, 1)
+    camera.aspect = w / h
+    camera.updateProjectionMatrix()
+    renderer.render(scene, camera)
+  }
   if (labelRenderer) labelRenderer.render(scene, camera)
+  const now = performance.now()
+  if (now - lastCameraEmit > 100 && camera) {
+    lastCameraEmit = now
+    const p = camera.position
+    emit('camera-position', { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100, z: Math.round(p.z * 100) / 100 })
+  }
 }
 
 function onResize() {
@@ -684,6 +1033,30 @@ watch(
   () => updateDimensionsArrows(),
   { immediate: true }
 )
+// Расстояния между кирпичами: при включении/выключении галочки emit'им данные.
+watch(
+  () => props.showBrickDistances,
+  (show) => {
+    if (!show) {
+      emit('brick-distances', [])
+      return
+    }
+    if (wallsGroup) {
+      wallsGroup.updateMatrixWorld(true)
+      emit('brick-distances', getBrickDistances())
+    }
+  },
+  { immediate: true }
+)
+
+defineExpose({
+  getBrickDistances,
+  setCameraViewX,
+  setCameraViewY,
+  setCameraViewZ,
+  resetCamera,
+  setFourViewMode,
+})
 </script>
 
 <style scoped>

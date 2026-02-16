@@ -10,20 +10,24 @@
         <InputsPanel
           v-model:house-length="houseLength"
           v-model:house-width="houseWidth"
-          v-model:brick-length="brickLength"
-          v-model:brick-width="brickWidth"
-          v-model:brick-height="brickHeight"
-          v-model:brick-gap="brickGap"
-          v-model:edge-color="edgeColor"
           v-model:ground-color="groundColor"
-          v-model:show-all-numbers="showAllNumbers"
-          v-model:show-brick-dimensions="showBrickDimensions"
-          v-model:label-size="labelSize"
+        />
+        <Camera
+          :cam-x="cameraPos.x"
+          :cam-y="cameraPos.y"
+          :cam-z="cameraPos.z"
+          :four-view="fourViewMode"
+          @view-x="onCameraViewX"
+          @view-y="onCameraViewY"
+          @view-z="onCameraViewZ"
+          @reset="onCameraReset"
+          @four-view="onFourView"
         />
       </aside>
 
       <section class="canvas-area">
         <HouseCanvas
+          ref="houseCanvasRef"
           :house-length="houseLength"
           :house-width="houseWidth"
           :brick-width="brickWidth"
@@ -34,54 +38,40 @@
           :ground-color="groundColor"
           :show-all-numbers="showAllNumbers"
           :show-brick-dimensions="showBrickDimensions"
+          :show-brick-distances="showBrickDistances"
           :label-size="labelSize"
           :bricks-per-row="bricksPerRow"
           :rows="rows"
           :distribution-brick-count="distributionBrickCount"
+          @brick-distances="brickDistances = $event"
+          @brick-hover="onBrickHover"
+          @camera-position="onCameraPosition"
         />
       </section>
 
       <aside class="panel panel-right">
-        <div class="info-block info-block-clamping">
-          <h3>Кладка</h3>
-          <div class="field-group">
-            <label>Количество рядов</label>
-            <div class="input-row">
-              <InputNumber v-model="rows" :min="1" :max="100" :step="1" />
-              <Slider v-model="rows" :min="1" :max="100" :step="1" class="slider" />
-            </div>
-            <p class="hint">Высота стен: {{ wallHeight.toFixed(2) }} м</p>
-          </div>
-          <div class="field-group">
-            <label>Количество кирпичей</label>
-            <div class="input-row">
-              <InputNumber
-                v-model="distributionBrickCount"
-                :min="0"
-                :max="10000"
-                :minFractionDigits="0"
-                :maxFractionDigits="0"
-                :step="1"
-              />
-              <Slider v-model="distributionBrickCount" :min="0" :max="500" :step="1" class="slider" />
-            </div>
-            <p class="hint">0 = полная кладка. При &gt;0: кирпичи по периметру; при замыкании круга — новый ряд со смещением на ½ кирпича</p>
-          </div>
-        </div>
-        <div class="info-block">
-          <h3>Размеры кирпича</h3>
-          <p>Длина: {{ brickLength }} мм</p>
-          <p>Ширина: {{ brickWidth }} мм</p>
-          <p>Высота: {{ brickHeight }} мм</p>
-          <p>Зазор: {{ brickGap }} мм</p>
-        </div>
-        <div class="info-block">
-          <h3>Ряды / Высота</h3>
-          <p>Рядов: {{ rows }}</p>
-          <p>Высота стен: {{ wallHeight.toFixed(2) }} м</p>
-        </div>
+        <BrickPanel
+          v-model:brick-length="brickLength"
+          v-model:brick-width="brickWidth"
+          v-model:brick-height="brickHeight"
+          v-model:brick-gap="brickGap"
+          v-model:edge-color="edgeColor"
+          v-model:show-all-numbers="showAllNumbers"
+          v-model:show-brick-dimensions="showBrickDimensions"
+          v-model:show-brick-distances="showBrickDistances"
+          v-model:label-size="labelSize"
+          v-model:rows="rows"
+          v-model:distribution-brick-count="distributionBrickCount"
+          :brick-distances="brickDistances"
+        />
       </aside>
     </main>
+
+    <UXUI
+      :hovered-brick-data="hoveredBrickData"
+      :pointer-x="pointerX"
+      :pointer-y="pointerY"
+    />
 
     <footer class="footer">
       <ResultsTable
@@ -96,34 +86,71 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import InputNumber from 'primevue/inputnumber'
-import Slider from 'primevue/slider'
 import InputsPanel from './components/InputsPanel.vue'
+import BrickPanel from './components/BrickPanel.vue'
 import HouseCanvas from './components/HouseCanvas.vue'
 import ResultsTable from './components/ResultsTable.vue'
+import UXUI from './components/UXUI.vue'
+import Camera from './components/Camera.vue'
 
-// Размеры дома (м)
 const houseLength = ref(2)
 const houseWidth = ref(2)
+const groundColor = ref('#4a5568')
 
-// Размеры кирпича (мм) — стандарт 250x120x65
 const brickLength = ref(250)
 const brickWidth = ref(120)
 const brickHeight = ref(65)
 const brickGap = ref(2)
-const edgeColor = ref('#00ff00') // Цвет рёбер кирпичей (ярко-зелёный по умолчанию)
-const groundColor = ref('#4a5568') // Цвет плоскости (фундамента) дома
-const showAllNumbers = ref(false) // Показать номера кирпичей (выкл — скрыть, при hover всё равно показывать)
-const showBrickDimensions = ref(false) // Показать размеры кирпича (стрелки X, Y, Z)
-const labelSize = ref(1) // Размер лейбла (множитель 0.5–2)
+const edgeColor = ref('#00ff00')
+const showAllNumbers = ref(false)
+const showBrickDimensions = ref(false)
+const showBrickDistances = ref(false)
+const brickDistances = ref([])
+const labelSize = ref(1)
 
-// Количество рядов
 const rows = ref(1)
-
-// Поэтапное распределение: количество кирпичей (целое или дробное), по умолчанию 3
 const distributionBrickCount = ref(3)
 
-// Вычисляемые значения (с учётом зазоров)
+const hoveredBrickData = ref(null)
+const pointerX = ref(0)
+const pointerY = ref(0)
+
+const houseCanvasRef = ref(null)
+const cameraPos = ref({ x: 20, y: 12, z: 20 })
+const fourViewMode = ref(false)
+
+function onCameraPosition({ x, y, z }) {
+  cameraPos.value = { x, y, z }
+}
+
+function onCameraViewX() {
+  houseCanvasRef.value?.setCameraViewX?.()
+}
+
+function onCameraViewY() {
+  houseCanvasRef.value?.setCameraViewY?.()
+}
+
+function onCameraViewZ() {
+  houseCanvasRef.value?.setCameraViewZ?.()
+}
+
+function onCameraReset() {
+  houseCanvasRef.value?.resetCamera?.()
+}
+
+function onFourView() {
+  fourViewMode.value = !fourViewMode.value
+  houseCanvasRef.value?.setFourViewMode?.(fourViewMode.value)
+}
+
+function onBrickHover(payload) {
+  if (!payload) return
+  hoveredBrickData.value = payload.data ?? null
+  pointerX.value = payload.pointerX ?? 0
+  pointerY.value = payload.pointerY ?? 0
+}
+
 const perimeter = computed(() => 2 * (houseLength.value + houseWidth.value))
 const brickRowLengthM = computed(() => (brickWidth.value + brickGap.value) / 1000)
 const bricksPerRow = computed(() => Math.ceil(perimeter.value / brickRowLengthM.value))
@@ -178,56 +205,7 @@ const wallHeight = computed(() => rows.value * (brickHeight.value + brickGap.val
 }
 
 .panel-right {
-  max-width: 280px;
-}
-
-.info-block {
-  margin-bottom: 1rem;
-}
-
-.info-block h3 {
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
-  color: #a0c4ff;
-}
-
-.info-block p {
-  font-size: 0.9rem;
-  margin: 0.25rem 0;
-}
-
-.info-block-clamping .field-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.info-block-clamping .field-group label {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #ccc;
-}
-
-.info-block-clamping .input-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.info-block-clamping .input-row :deep(.p-inputnumber) {
-  flex: 1;
-}
-
-.info-block-clamping .input-row :deep(.p-inputnumber-input) {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-}
-
-.info-block-clamping .hint {
-  font-size: 0.8rem;
-  color: #a0a0a0;
-  margin-top: 0.25rem;
+  max-width: 320px;
 }
 
 .canvas-area {
@@ -255,9 +233,7 @@ const wallHeight = computed(() => rows.value * (brickHeight.value + brickGap.val
   }
 
   .panel-right {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+    display: block;
   }
 }
 </style>
