@@ -17,6 +17,7 @@ const props = defineProps({
   brickLength: { type: Number, default: 625 },
   brickHeight: { type: Number, default: 250 },
   brickGap: { type: Number, default: 2 },
+  edgeColor: { type: String, default: '#00ff00' },
   bricksPerRow: { type: Number, default: 0 },
   rows: { type: Number, default: 10 },
 })
@@ -25,6 +26,7 @@ const props = defineProps({
 const containerRef = ref(null) // DOM-элемент для вставки canvas
 let scene, camera, renderer, controls, wallsGroup, groundMesh
 let lastBrickGeometry, lastBrickMaterial // Общая геометрия/материал для всех кирпичей (для переиспользования)
+let lastEdgesGeometry, lastLineMaterial // Геометрия рёбер и материал линий (подсветка граней кирпичей)
 let animationId = null
 
 const brickColor = 0xc75c3d // Цвет кирпича (оранжево-красный)
@@ -121,6 +123,8 @@ function buildWalls() {
   }
   lastBrickGeometry?.dispose()
   lastBrickMaterial?.dispose()
+  lastEdgesGeometry?.dispose()
+  lastLineMaterial?.dispose()
 
   // Размеры в метрах (мм / 1000)
   const L = props.houseLength / 2
@@ -150,6 +154,13 @@ function buildWalls() {
     flatShading: true,
   })
 
+  // Геометрия и материал рёбер (подсветка граней — кирпичи не сливаются в одну массу)
+  lastEdgesGeometry = new THREE.EdgesGeometry(lastBrickGeometry)
+  lastLineMaterial = new THREE.LineBasicMaterial({
+    color: new THREE.Color(props.edgeColor),
+    linewidth: 1,
+  })
+
   // Смещение стены от контура фундамента (толщина кирпича + запас)
   const offset = brickL / 2 + 0.005
 
@@ -173,6 +184,10 @@ function buildWalls() {
         mesh.castShadow = true
         mesh.receiveShadow = true
 
+        // Подсветка рёбер — зелёные линии по граням кирпича
+        const edges = new THREE.LineSegments(lastEdgesGeometry, lastLineMaterial)
+        mesh.add(edges)
+
         // Позиция по длине стены (центрируем ряд)
         const along = (col + 0.5) * stepAlong - (wall.bricks * stepAlong) / 2
         // Позиция по высоте (Y в Three.js — вверх)
@@ -191,6 +206,7 @@ function buildWalls() {
   // Fallback: если кирпичей 0, рисуем хотя бы один
   if (wallsGroup.children.length === 0) {
     const mesh = new THREE.Mesh(lastBrickGeometry, lastBrickMaterial)
+    mesh.add(new THREE.LineSegments(lastEdgesGeometry, lastLineMaterial))
     mesh.position.set(0, brickH / 2, -W - brickL / 2)
     mesh.castShadow = true
     wallsGroup.add(mesh)
@@ -252,6 +268,7 @@ watch(
     props.brickLength,
     props.brickHeight,
     props.brickGap,
+    props.edgeColor,
     props.bricksPerRow,
     props.rows,
   ],

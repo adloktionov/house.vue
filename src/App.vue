@@ -14,6 +14,7 @@
           v-model:brick-width="brickWidth"
           v-model:brick-height="brickHeight"
           v-model:brick-gap="brickGap"
+          v-model:edge-color="edgeColor"
           v-model:rows="rows"
           :wall-height="wallHeight"
         />
@@ -27,6 +28,7 @@
           :brick-length="brickLength"
           :brick-height="brickHeight"
           :brick-gap="brickGap"
+          :edge-color="edgeColor"
           :bricks-per-row="bricksPerRow"
           :rows="rows"
         />
@@ -74,6 +76,7 @@ const brickLength = ref(250)
 const brickWidth = ref(120)
 const brickHeight = ref(65)
 const brickGap = ref(2)
+const edgeColor = ref('#00ff00') // Цвет рёбер кирпичей (ярко-зелёный по умолчанию)
 
 // Количество рядов
 const rows = ref(10)

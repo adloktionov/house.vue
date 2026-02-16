@@ -51,6 +51,13 @@
       </div>
     </div>
     <div class="field-group">
+      <label>Цвет рёбер кирпичей</label>
+      <div class="color-row">
+        <input v-model="localEdgeColor" type="color" class="color-input" />
+        <span class="color-value">{{ localEdgeColor }}</span>
+      </div>
+    </div>
+    <div class="field-group">
       <label>Зазор между кирпичами (мм)</label>
       <div class="input-row">
         <InputNumber v-model="localBrickGap" :min="1" :max="3" :step="0.5" :minFractionDigits="0" :maxFractionDigits="1" />
@@ -90,6 +97,7 @@ const props = defineProps({
   brickWidth: { type: Number, default: 120 },
   brickHeight: { type: Number, default: 65 },
   brickGap: { type: Number, default: 2 },
+  edgeColor: { type: String, default: '#00ff00' },
   rows: { type: Number, default: 10 },
   wallHeight: { type: Number, default: 0 },
 })
@@ -101,6 +109,7 @@ const emit = defineEmits([
   'update:brickWidth',
   'update:brickHeight',
   'update:brickGap',
+  'update:edgeColor',
   'update:rows',
 ])
 
@@ -166,6 +175,10 @@ const localBrickHeight = computed({
 const localBrickGap = computed({
   get: () => props.brickGap,
   set: (v) => emit('update:brickGap', v ?? 2),
+})
+const localEdgeColor = computed({
+  get: () => props.edgeColor,
+  set: (v) => emit('update:edgeColor', v ?? '#00ff00'),
 })
 const localRows = computed({
   get: () => props.rows,
@@ -249,5 +262,26 @@ const localRows = computed({
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.2);
   color: #fff;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.color-input {
+  width: 48px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.color-value {
+  font-size: 0.85rem;
+  color: #aaa;
 }
 </style>
