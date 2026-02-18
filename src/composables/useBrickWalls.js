@@ -20,6 +20,9 @@ export function useBrickWalls(props, emit, getSceneRefs) {
   let lastBrickGeometry, lastBrickMaterial, lastEdgesGeometry, lastLineMaterial
   // Материалы для замыкающих кирпичей (красные)
   let closureBrickMaterial, closureBrickLineMaterial
+  // Материал и геометрии для зазоров E (цвет из props.gapColor)
+  let gapMaterial
+  let gapGeometries = []
   // Геометрии замыкающих кирпичей (для последующего dispose)
   let closureGeometries = []
   // Текущий кирпич под курсором мыши
@@ -121,6 +124,39 @@ export function useBrickWalls(props, emit, getSceneRefs) {
       })
     }
     return results
+  }
+
+  /**
+   * Логирует в консоль расстояния (зазоры) между ВСЕМИ соседними кирпичами.
+   *
+   * Пример вывода для 4 кирпичей:
+   *   расстояние от 1 до 2 = 2 мм
+   *   расстояние от 2 до 3 = 1 мм
+   *   расстояние от 3 до 4 = 3 мм
+   *
+   * Это удобно, чтобы глазами проверить последовательность N1‑E1‑N2‑E2‑Z1‑E3‑N3...
+   *
+   * @returns {Array<{from:number,to:number,gapMm:number,overlapMm?:number}>}
+   */
+  function logBrickDistances() {
+    const { wallsGroup } = refs()
+    wallsGroup?.updateMatrixWorld?.(true)
+    const distances = getBrickDistances()
+
+    // eslint-disable-next-line no-console
+    console.group?.('[bricks] расстояния между кирпичами')
+    distances.forEach((d) => {
+      const overlapPart = d.overlapMm != null
+        ? ` (ПЕРЕСЕЧЕНИЕ ${d.overlapMm} мм)`
+        : ''
+      // eslint-disable-next-line no-console
+      console.log(`расстояние от ${d.from} до ${d.to} = ${d.gapMm} мм${overlapPart}`)
+    })
+    // eslint-disable-next-line no-console
+    if (distances.length === 0) console.log('кирпичей меньше двух — расстояния не считаются')
+    console.groupEnd?.()
+
+    return distances
   }
 
   /**
@@ -238,12 +274,17 @@ export function useBrickWalls(props, emit, getSceneRefs) {
    * @param {boolean} isHovered - Кирпич под курсором
    */
   function updateLabelVisibility(mesh, showAll, isHovered) {
-    const { labelEl, labelObj } = mesh.userData || {}
-    if (!labelEl || !labelObj) return
-    
+    const ud = mesh.userData || {}
+    const { labelEl, labelObj, sideLabels } = ud
     const show = showAll || isHovered
-    labelObj.visible = show
-    labelEl.classList.toggle('brick-label-hover', isHovered)
+    if (labelEl && labelObj) {
+      labelObj.visible = show
+      labelEl.classList.toggle('brick-label-hover', isHovered)
+    }
+    const showSides = props.showBrickSides || isHovered
+    if (sideLabels && Array.isArray(sideLabels)) {
+      sideLabels.forEach(({ obj }) => { obj.visible = showSides })
+    }
   }
 
   /**
@@ -357,300 +398,212 @@ export function useBrickWalls(props, emit, getSceneRefs) {
   }
 
   /**
-   * ГЛАВНАЯ ФУНКЦИЯ: Строит стены из кирпичей по периметру дома.
-   * Распределяет N кирпичей по периметру, создавая несколько рядов с чередованием.
-   * Обрабатывает замыкающие (обрезанные) кирпичи на углах.
-   * 
-   * Алгоритм:
-   * 1. Строит траекторию из 4 сегментов (стен) вокруг фундамента
-   * 2. Вычисляет периметр и количество кирпичей в одном круге
-   * 3. Для каждого кирпича:
-   *    - Определяет ряд и позицию в круге
-   *    - Вычисляет расстояние вдоль периметра (с учётом смещения рядов)
-   *    - Проверяет необходимость замыкающего кирпича на углу
-   *    - Создаёт меш с геометрией, материалом, подписью
-   *    - Размещает кирпич в 3D-пространстве
-   * 
-   * @param {number} L - Половина длины дома (м)
-   * @param {number} W - Половина ширины дома (м)
-   * @param {number} brickW - Ширина кирпича (м)
-   * @param {number} brickL - Длина кирпича (м)
-   * @param {number} brickH - Высота кирпича (м)
-   * @param {number} gapM - Зазор между кирпичами (м)
+   * Добавляет лейблы сторон N/S/E/W к мешу кирпича (в локальной системе: +X=N, -X=S, +Z=E, -Z=W).
    */
-  function buildDistributionWalls(L, W, brickW, brickL, brickH, gapM) {
-    const { wallsGroup } = refs()
-    if (!wallsGroup) return
+  function addSideLabels(mesh, halfW, halfL, baseFontSize) {
+    const sideLabels = []
+    const positions = [
+      { pos: [halfW, 0, 0], text: 'N' },
+      { pos: [-halfW, 0, 0], text: 'S' },
+      { pos: [0, 0, halfL], text: 'E' },
+      { pos: [0, 0, -halfL], text: 'W' },
+    ]
+    positions.forEach(({ pos, text }) => {
+      const div = document.createElement('div')
+      div.className = 'brick-label brick-label-side'
+      div.textContent = text
+      div.style.fontSize = `${Math.max(8, baseFontSize * 0.8)}px`
+      const obj = new CSS2DObject(div)
+      obj.position.set(...pos)
+      obj.center.set(0.5, 0.5)
+      obj.visible = !!props.showBrickSides
+      mesh.add(obj)
+      sideLabels.push({ el: div, obj })
+    })
+    return sideLabels
+  }
 
-    // ========== ПОДГОТОВКА ПАРАМЕТРОВ ==========
+  /**
+   * Ставит один меш (Z, N или E) на стене и добавляет в wallsGroup.
+   * type: 'Z1' | 'Z' | 'N' | 'E', lenAlong — длина вдоль ряда, brickNumber — номер для Z/N (для подписи).
+   */
+  function placeBrick(wallsGroup, wall, pos, lenAlong, type, brickNumber, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries) {
+    const x = brickW
     const halfW = brickW / 2
     const halfL = brickL / 2
-    const baseFontSize = 10 * (props.labelSize || 1)
-    const n = Math.max(1, Math.floor(props.distributionBrickCount))  // Минимум 1 кирпич
-    
-    // Размер кирпича вдоль траектории (всегда берём большую сторону, т.к. кирпич может поворачиваться).
-    // По смыслу это длина «обычного» кирпича N в паре N + E (E — пустой кирпич‑зазор).
-    const brickAlongPath = Math.max(brickW, brickL)
-    const halfBrickAlongPath = brickAlongPath / 2
+    const EPS = 1e-9
+    const isGap = type === 'E'
+    const isClosure = type === 'Z1' || type === 'Z'
 
-    // ===== Рандомизация зазоров (пустых кирпичей E) =====
-    // Пользователь задаёт максимальный зазор в мм (props.brickGap, 1–3 мм).
-    // Мы трактуем это как Ymax, а Ymin всегда 1 мм. Каждый конкретный зазор Y_i берём случайно в [Ymin, Ymax].
-    const minGapM = 0.001                                   // 1 мм
-    const maxGapM = Math.max(minGapM, Math.min(gapM, 0.003)) // не больше 3 мм и не меньше 1 мм
-    const avgGapM = (minGapM + maxGapM) / 2
-    const randomGapM = () => minGapM + Math.random() * (maxGapM - minGapM)
-
-    // Полная длина кирпича N вдоль траектории с учётом масштаба brickMargin (визуальный зазор внутри кирпича).
-    const brickExtentM = brickAlongPath * brickMargin
-
-    // Оценочный шаг между центрами N_i и N_{i+1}:
-    //   stepEst ≈ длина кирпича (с учётом brickMargin) + средний зазор E (avgGapM).
-    // Это используется только для оценки того, сколько кирпичей помещается в один «круг» по периметру.
-    const stepEst = brickExtentM + avgGapM
-
-    // Минимальный зазор между рядами (по высоте) и между замыкающим кирпичом и следующим рядом (1–3 мм).
-    // Это зазор по оси Y (ряды), а не вдоль стены.
-    const closureGapM = Math.min(Math.max(gapM, 0.001), 0.003)
-
-    // ========== ПОСТРОЕНИЕ ТРАЕКТОРИИ ПО ПЕРИМЕТРУ ==========
-    // Массив из 4 сегментов (стен) вокруг фундамента
-    // Каждый сегмент имеет длину и функцию get(t) для получения точки на стене
-    const segs = [
-      // Передняя стена (по X, снизу, z = -W)
-      { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: -L + halfL + t * (2 * L - brickL), z: -W, wallIndex: 0, rotate90: true }) },
-      // Правая стена (по Z, справа, x = L)
-      { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: L, z: -W + halfW + t * (2 * W - brickW), wallIndex: 1, rotate90: false }) },
-      // Задняя стена (по X, сверху, z = W)
-      { len: Math.max(0, 2 * L - brickL), get: (t) => ({ x: L - halfL - t * (2 * L - brickL), z: W, wallIndex: 2, rotate90: true }) },
-      // Левая стена (по Z, слева, x = -L)
-      { len: Math.max(0, 2 * W - brickW), get: (t) => ({ x: -L, z: W - halfW - t * (2 * W - brickW), wallIndex: 3, rotate90: false }) },
-    ]
-
-    // Вычисляем общий периметр (сумма длин всех сегментов)
-    const perimeter = segs.reduce((sum, s) => sum + s.len, 0)
-    
-    // Массив накопленных концов сегментов (для быстрого определения, на каком сегменте находится расстояние)
-    const segEnds = []
-    let acc = 0
-    for (let s = 0; s < segs.length; s++) {
-      if (segs[s].len > 0) acc += segs[s].len
-      segEnds.push(acc)
-    }
-    
-    // Количество кирпичей в одном круге по периметру (приблизительная оценка по среднему шагу).
-    const bricksPerLap = perimeter > 1e-6 ? Math.max(1, Math.floor(perimeter / stepEst)) : n
-
-    // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ НАВИГАЦИИ ПО ТРАЕКТОРИИ ==========
-    
-    /**
-     * По расстоянию вдоль периметра находит точку на траектории.
-     * Определяет, на каком сегменте находится расстояние, и вызывает get(t) для этого сегмента.
-     * @param {number} dist - Расстояние вдоль периметра (м)
-     * @returns {Object} {x, z, wallIndex, rotate90}
-     */
-    function pointAtDistance(dist) {
-      const d = perimeter > 1e-6 ? dist % perimeter : 0
-      let a = 0
-      for (let s = 0; s < segs.length; s++) {
-        if (segs[s].len <= 0) continue
-        if (a + segs[s].len >= d) {
-          const t = (d - a) / segs[s].len
-          return segs[s].get(Math.min(1, Math.max(0, t)))
-        }
-        a += segs[s].len
+    let geom, mat, lineMat
+    if (isGap) {
+      const gapLen = Math.max(0.001, Math.min(0.003, lenAlong))
+      geom = new THREE.BoxGeometry(gapLen, brickH, brickL)
+      gapGeometries.push(geom)
+      mat = gapMaterial
+      lineMat = null
+    } else {
+      if (isClosure) {
+        geom = new THREE.BoxGeometry(lenAlong, brickH, brickL)
+        closureGeometries.push(geom)
+        mat = closureBrickMaterial
+        lineMat = closureBrickLineMaterial
+      } else {
+        geom = lastBrickGeometry
+        mat = lastBrickMaterial
+        lineMat = lastLineMaterial
       }
-      return segs[segs.length - 1].get(1)
     }
 
-    /**
-     * Находит конец сегмента, на котором находится расстояние.
-     * @param {number} dist - Расстояние вдоль периметра (м)
-     * @returns {number} Расстояние до конца сегмента
-     */
-    function getSegmentEnd(dist) {
-      const d = perimeter > 1e-6 ? dist % perimeter : 0
-      for (let s = 0; s < segEnds.length; s++) {
-        if (d < segEnds[s]) return segEnds[s]
-      }
-      return perimeter
-    }
+    const mesh = new THREE.Mesh(geom, mat)
+    mesh.scale.set(1, brickMargin, brickMargin)
+    mesh.castShadow = true
+    mesh.receiveShadow = true
 
-    /**
-     * Определяет индекс сегмента (0-3), на котором находится расстояние.
-     * @param {number} dist - Расстояние вдоль периметра (м)
-     * @returns {number} Индекс сегмента
-     */
-    function getSegmentIndex(dist) {
-      const d = perimeter > 1e-6 ? dist % perimeter : 0
-      for (let s = 0; s < segEnds.length; s++) {
-        if (d < segEnds[s]) return s
-      }
-      return segEnds.length - 1
-    }
-
-    /**
-     * Вычисляет расстояние до физического угла (с учётом половины кирпича).
-     * @param {number} dist - Расстояние вдоль периметра (м)
-     * @returns {number} Расстояние до угла
-     */
-    function getCornerDist(dist) {
-      const s = getSegmentIndex(dist)
-      const ext = (s === 0 || s === 2) ? halfL : halfW  // Для сегментов 0,2 используется halfL, для 1,3 — halfW
-      return segEnds[s] + ext
-    }
-
-    /**
-     * Вычисляет расстояние до угла предыдущего сегмента (для стыковки замыкающих кирпичей).
-     * @param {number} segIndex - Индекс текущего сегмента
-     * @returns {number} Расстояние до угла предыдущего сегмента
-     */
-    function getPrevSegmentCornerDist(segIndex) {
-      if (segIndex <= 0) return 0
-      const ext = (segIndex === 1 || segIndex === 3) ? halfL : halfW
-      return segEnds[segIndex - 1] + ext
-    }
-
-    // ========== СОЗДАНИЕ ОБЩИХ ГЕОМЕТРИЙ И МАТЕРИАЛОВ ==========
-    // Общая геометрия для всех обычных кирпичей (экономия памяти)
-    lastBrickGeometry = new THREE.BoxGeometry(brickW, brickH, brickL)
-    lastBrickMaterial = new THREE.MeshLambertMaterial({ color: brickColor, flatShading: true })
-    
-    // Материалы для замыкающих кирпичей (красные)
-    closureBrickMaterial = new THREE.MeshLambertMaterial({ color: closureBrickColor, flatShading: true })
-    
-    // Геометрия рёбер для контура кирпичей
-    lastEdgesGeometry = new THREE.EdgesGeometry(lastBrickGeometry)
-    
-    // Материалы для линий контура
-    lastLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color(props.edgeColor), linewidth: 1 })
-    closureBrickLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#ff0000'), linewidth: 1 })
-
-    // ========== ОСНОВНОЙ ЦИКЛ СОЗДАНИЯ КИРПИЧЕЙ ==========
-    // Здесь реализуется последовательность N1 + E1 + N2 + E2 + ... + Z:
-    // - N — обычный кирпич
-    // - E — «пустой кирпич» (зазор) случайной длины от 1 до props.brickGap мм
-    //
-    // В геометрии мы не рисуем E, он учитывается только как дополнительное смещение центра следующего кирпича.
-    // Расстояние между центрами N_i и N_{i+1} = brickExtentM + randomGapM().
-    let distAlong = 0 // текущее расстояние вдоль периметра для центра кирпича (не по модулю)
-
-    for (let i = 0; i < n; i++) {
-      // Определяем ряд и позицию в круге (по оценочному количеству кирпичей на один обход)
-      const row = Math.floor(i / bricksPerLap)           // Номер ряда (0, 1, 2, ...)
-      const posInLap = i % bricksPerLap                  // Позиция в текущем круге (0..bricksPerLap-1)
-      
-      // Для каждого ряда делаем небольшое смещение на полкирпича (чередование швов),
-      // но distAlong накапливаем глобально, чтобы зазоры E_i не сбрасывались.
-      if (posInLap === 0) {
-        const offsetForRow = (row % 2) * halfBrickAlongPath
-        distAlong = offsetForRow
-      }
-
-      // Оборачиваем расстояние в пределах периметра для поиска сегмента и точки
-      const distWrapped = perimeter > 1e-6 ? distAlong % perimeter : 0
-      
-      // Высота кирпича (центр по Y)
-      const y = row * (brickH + closureGapM) + brickH / 2
-
-      // Определяем сегмент и угол
-      const segIndex = getSegmentIndex(distWrapped)
-      const cornerDist = getCornerDist(distWrapped)
-      
-      // ========== ОПРЕДЕЛЕНИЕ ЗАМЫКАЮЩЕГО КИРПИЧА ==========
-      // Полудлина кирпича вдоль пути на текущем сегменте
-      const halfExtentSeg = (segIndex === 0 || segIndex === 2) ? halfL * brickMargin : halfW * brickMargin
-      
-      // Расстояние от края кирпича до угла
-      const distFromEdgeToCorner = cornerDist - (distWrapped + halfExtentSeg)
-      
-      // Размер кирпича вдоль пути на текущем сегменте (без учёта brickMargin)
-      const brickExtentSeg = (segIndex === 0 || segIndex === 2) ? brickL : brickW
-      
-      // Кирпич становится замыкающим, если его край не достаёт до угла, но расстояние меньше длины целого кирпича
-      const needClosure = distFromEdgeToCorner > 1e-6 && distFromEdgeToCorner < brickExtentSeg
-      
-      // Вычисляем длину замыкающего кирпича (в метрах)
-      const closureLenM = needClosure ? Math.min(cornerDist - (distWrapped - halfExtentSeg), 2 * brickAlongPath) : null
-      const closureLen = closureLenM != null ? closureLenM / brickMargin : null
-      
-      // Позиция центра кирпича: для замыкающего — середина между началом и углом, иначе — обычная позиция
-      const posDist = needClosure ? (distWrapped - halfExtentSeg + cornerDist) / 2 : distWrapped
-      const pt = pointAtDistance(posDist)
-
-      // ========== СОЗДАНИЕ ГЕОМЕТРИИ ==========
-      let geom = lastBrickGeometry
-      if (closureLen != null) {
-        // Замыкающий кирпич — создаём новую геометрию с другой длиной
-        const g = new THREE.BoxGeometry(brickW, brickH, closureLen)
-        closureGeometries.push(g)  // Сохраняем для последующего dispose
-        geom = g
-      }
-
-      // ========== СОЗДАНИЕ МАТЕРИАЛОВ И МЕША ==========
-      const mat = needClosure ? closureBrickMaterial : lastBrickMaterial
-      const lineMat = needClosure ? closureBrickLineMaterial : lastLineMaterial
-      const mesh = new THREE.Mesh(geom, mat)
-      
-      // Масштабируем меш для визуального зазора между кирпичами
-      mesh.scale.set(brickMargin, brickMargin, brickMargin)
-      mesh.castShadow = true
-      mesh.receiveShadow = true
-      
-      // Добавляем контур (рёбра) кирпича
+    if (!isGap) {
       const edgesGeom = geom === lastBrickGeometry ? lastEdgesGeometry : new THREE.EdgesGeometry(geom)
       if (geom !== lastBrickGeometry) closureGeometries.push(edgesGeom)
       mesh.add(new THREE.LineSegments(edgesGeom, lineMat))
-      
-      // ========== СОЗДАНИЕ ПОДПИСИ-НОМЕРА ==========
+    }
+
+    const centerAlong = pos + lenAlong / 2
+    const worldPos = wall.start.clone()
+      .add(wall.dir.clone().multiplyScalar(centerAlong))
+      .add(wall.inward.clone().multiplyScalar(halfThickness))
+    worldPos.y = y
+
+    mesh.rotation.y = wall.rotY
+    mesh.position.copy(worldPos)
+
+    const userData = {
+      wallIndex: wall.wallIndex,
+      row: 0,
+      isClosure: isClosure,
+      closureLengthMm: isClosure ? Math.round(lenAlong * 1000) : null,
+    }
+
+    if (isGap) {
+      userData.type = 'gap'
+    } else {
+      userData.number = brickNumber
       const labelDiv = document.createElement('div')
-      labelDiv.className = needClosure ? 'brick-label brick-label-closure' : 'brick-label'
-      labelDiv.textContent = i + 1
+      labelDiv.className = isClosure ? 'brick-label brick-label-closure' : 'brick-label'
+      labelDiv.textContent = brickNumber
       labelDiv.style.fontSize = `${baseFontSize}px`
       const labelObj = new CSS2DObject(labelDiv)
       labelObj.position.set(0, 0, 0)
       labelObj.center.set(0.5, 0.5)
       mesh.add(labelObj)
-      
-      // Сохраняем метаданные кирпича
-      mesh.userData = {
-        number: i + 1,
-        wallIndex: pt.wallIndex,
-        row,
-        labelEl: labelDiv,
-        labelObj,
-        isClosure: needClosure,
-        closureLengthMm: closureLenM != null ? Math.round(closureLenM * 1000) : null,
-      }
-      
-      // Обновляем видимость подписи
+      userData.labelEl = labelDiv
+      userData.labelObj = labelObj
+      userData.sideLabels = addSideLabels(mesh, halfW, halfL, baseFontSize)
       updateLabelVisibility(mesh, props.showAllNumbers, false)
-      
-      // ========== ПОВОРОТ КИРПИЧА ==========
-      // Для стен вдоль X (сегменты 0 и 2) поворачиваем кирпич на 90°
-      if (pt.rotate90) mesh.rotation.y = Math.PI / 2
-      
-      // ========== СМЕЩЕНИЕ ВНУТРЬ ОТ КРАЯ И ФИНАЛЬНАЯ ПОЗИЦИЯ ==========
-      // Траектория идёт по краю фундамента, поэтому центр кирпича нужно сместить внутрь
-      // на половину толщины кирпича (чтобы кирпич не выходил за границу)
-      const halfExtX = (pt.wallIndex === 1 || pt.wallIndex === 3) ? halfW * brickMargin : 0
-      const halfExtZ = (pt.wallIndex === 0 || pt.wallIndex === 2) ? halfW * brickMargin : 0
-      const dx = (pt.wallIndex === 1 ? -halfExtX : pt.wallIndex === 3 ? halfExtX : 0)
-      const dz = (pt.wallIndex === 0 ? halfExtZ : pt.wallIndex === 2 ? -halfExtZ : 0)
-      
-      // Устанавливаем финальную позицию кирпича
-      mesh.position.set(pt.x + dx, y, pt.z + dz)
-      
-      // Добавляем кирпич в группу стен
-      wallsGroup.add(mesh)
-
-      // После установки кирпича сдвигаем расстояние вдоль периметра:
-      // центр следующего кирпича = центр текущего + длина кирпича (с учётом brickMargin) + случайный зазор E.
-      // Таким образом реализуем пару N + E (E — пустой кирпич‑зазор).
-      distAlong += brickExtentM + randomGapM()
     }
 
-    // Сбрасываем hover-кирпич после пересборки
+    mesh.userData = userData
+    wallsGroup.add(mesh)
+  }
+
+  /**
+   * ГЛАВНАЯ ФУНКЦИЯ: Один круг по периметру.
+   * Z1 (2x) → E → N → E → N → … до края → Z (отступ от кирпича Z) → E → N → … → En перед Z1 → СТОП.
+   * E рисуется цветом зазора (props.gapColor).
+   */
+  function buildDistributionWalls(L, W, brickW, brickL, brickH, gapM) {
+    const { wallsGroup } = refs()
+    if (!wallsGroup) return
+
+    const baseFontSize = 10 * (props.labelSize || 1)
+    const halfW = brickW / 2
+    const x = brickW
+
+    const minGapM = 0.001
+    const maxGapM = Math.max(minGapM, Math.min(gapM, 0.003))
+    const randomGapM = () => minGapM + Math.random() * (maxGapM - minGapM)
+
+    const rowGapM = Math.min(Math.max(gapM, 0.001), 0.003)
+    const halfThickness = (brickL * brickMargin) / 2
+
+    const lenX = 2 * L
+    const lenZ = 2 * W
+    const perimeter = 2 * (lenX + lenZ)
+    const EPS = 1e-9
+
+    const walls = [
+      { len: lenX, start: new THREE.Vector3(-L, 0, -W), dir: new THREE.Vector3(1, 0, 0), inward: new THREE.Vector3(0, 0, 1), rotY: 0, wallIndex: 0 },
+      { len: lenZ, start: new THREE.Vector3(L, 0, -W), dir: new THREE.Vector3(0, 0, 1), inward: new THREE.Vector3(-1, 0, 0), rotY: Math.PI / 2, wallIndex: 1 },
+      { len: lenX, start: new THREE.Vector3(L, 0, W), dir: new THREE.Vector3(-1, 0, 0), inward: new THREE.Vector3(0, 0, -1), rotY: Math.PI, wallIndex: 2 },
+      { len: lenZ, start: new THREE.Vector3(-L, 0, W), dir: new THREE.Vector3(0, 0, -1), inward: new THREE.Vector3(1, 0, 0), rotY: -Math.PI / 2, wallIndex: 3 },
+    ]
+
+    function toWallPos(s) {
+      let t = perimeter > EPS ? ((s % perimeter) + perimeter) % perimeter : 0
+      for (let wi = 0; wi < walls.length; wi++) {
+        if (t >= walls[wi].len - EPS) {
+          t -= walls[wi].len
+          continue
+        }
+        return { wi, pos: t }
+      }
+      return { wi: 0, pos: 0 }
+    }
+
+    const gapColorHex = typeof props.gapColor === 'string' ? props.gapColor.replace('#', '0x') : '0x888888'
+    lastBrickGeometry = new THREE.BoxGeometry(brickW, brickH, brickL)
+    lastBrickMaterial = new THREE.MeshLambertMaterial({ color: brickColor, flatShading: true })
+    closureBrickMaterial = new THREE.MeshLambertMaterial({ color: closureBrickColor, flatShading: true })
+    gapMaterial = new THREE.MeshLambertMaterial({ color: parseInt(gapColorHex, 16), flatShading: true })
+    lastEdgesGeometry = new THREE.EdgesGeometry(lastBrickGeometry)
+    lastLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color(props.edgeColor), linewidth: 1 })
+    closureBrickLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#ff0000'), linewidth: 1 })
+
+    const y = brickH / 2
+    let brickNumber = 1
+    const maxBricks = Math.max(1, Math.floor(props.distributionBrickCount))
+
+    // Z1 в первом углу, длина 2x
+    const z1Len = 2 * x
+    const wall0 = walls[0]
+    placeBrick(wallsGroup, wall0, 0, z1Len, 'Z1', brickNumber++, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
+
+    let s = z1Len
+    while (true) {
+      // Ограничение по количеству кирпичей (Z и N)
+      if (brickNumber - 1 >= maxBricks) break
+
+      const remainingToStart = perimeter - s
+      const gapE = randomGapM()
+
+      if (remainingToStart < gapE + x - EPS) {
+        // En перед Z1 — замыкаем круг
+        if (remainingToStart > EPS) {
+          const enLen = Math.max(minGapM, Math.min(gapE, remainingToStart))
+          const { wi, pos } = toWallPos(s)
+          const wall = walls[wi]
+          placeBrick(wallsGroup, wall, pos, enLen, 'E', null, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
+        }
+        break
+      }
+
+      const { wi, pos } = toWallPos(s)
+      const wall = walls[wi]
+      const remaining = Math.max(0, wall.len - pos)
+
+      if (remaining > EPS && remaining <= 2 * x + EPS && s > z1Len + EPS) {
+        // Z (замыкающий, не Z1): следующий кирпич — от края кирпича Z с восточной стороны (не от угла дома)
+        const lenAlong = remaining
+        placeBrick(wallsGroup, wall, pos, lenAlong, 'Z', brickNumber++, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
+        s += lenAlong + brickL
+        continue
+      }
+
+      // E + N
+      placeBrick(wallsGroup, wall, pos, gapE, 'E', null, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
+      s += gapE
+      placeBrick(wallsGroup, wall, pos + gapE, x, 'N', brickNumber++, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
+      s += x
+    }
+
     hoveredBrickMesh = null
   }
 
@@ -677,8 +630,11 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     lastLineMaterial?.dispose()
     closureBrickMaterial?.dispose()
     closureBrickLineMaterial?.dispose()
+    gapMaterial?.dispose()
     closureGeometries.forEach((g) => g.dispose())
     closureGeometries = []
+    gapGeometries.forEach((g) => g.dispose())
+    gapGeometries = []
 
     // ========== КОНВЕРТАЦИЯ РАЗМЕРОВ ==========
     const L = props.houseLength / 2      // Половина длины дома (м)
@@ -793,6 +749,7 @@ export function useBrickWalls(props, emit, getSceneRefs) {
   return {
     buildWalls,                    // Построение стен из кирпичей
     getBrickDistances,              // Вычисление расстояний между кирпичами
+    logBrickDistances,              // Лог расстояний в консоль (отладка)
     updateDimensionsArrows,        // Обновление стрелок размеров
     updateAllLabelsVisibility,     // Обновление видимости всех подписей
     onPointerMove,                  // Обработчик движения мыши

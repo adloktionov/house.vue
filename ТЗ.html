@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Техническое задание — Кладка кирпичей по периметру дома</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #faf9f7;
+      --card: #fff;
+      --text: #1a1a1a;
+      --muted: #5c5c5c;
+      --accent: #b54c3a;
+      --accent-soft: #e8d5d1;
+      --border: #e0ddd9;
+      --code-bg: #f0eeeb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 2rem 1rem 4rem;
+      font-family: 'Source Serif 4', Georgia, serif;
+      font-size: 1.05rem;
+      line-height: 1.65;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 2px solid var(--accent);
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--text);
+      margin: 0 0 0.25em;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      font-size: 0.95rem;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin: 2rem 0 0.75rem;
+      padding-bottom: 0.25rem;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 1.25rem 0 0.5rem;
+    }
+
+    p {
+      margin: 0 0 0.75rem;
+      color: var(--text);
+    }
+
+    ul {
+      margin: 0 0 1rem;
+      padding-left: 1.35rem;
+    }
+
+    li {
+      margin-bottom: 0.35rem;
+    }
+
+    li strong {
+      color: var(--text);
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2rem 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0 1.25rem;
+      font-size: 0.98rem;
+      background: var(--card);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+
+    th, td {
+      padding: 0.65rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--accent-soft);
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(0,0,0,0.02);
+    }
+
+    .note {
+      font-size: 0.9rem;
+      color: var(--muted);
+      font-style: italic;
+      margin-top: 0.5rem;
+    }
+
+    code, .path {
+      font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--code-bg);
+      padding: 0.15em 0.45em;
+      border-radius: 4px;
+      color: var(--text);
+    }
+
+    .path {
+      display: inline-block;
+      margin: 0.15em 0;
+    }
+
+    section {
+      margin-bottom: 0.5rem;
+    }
+
+    @media (max-width: 560px) {
+      body { padding: 1rem 0.75rem 3rem; }
+      th, td { padding: 0.5rem 0.75rem; font-size: 0.92rem; }
+    }
+
+    @media print {
+      body { background: #fff; padding: 0 1rem 2rem; }
+      .wrap { max-width: 100%; }
+      table { box-shadow: none; border: 1px solid #ddd; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Техническое задание</h1>
+      <p class="subtitle">Кладка кирпичей по периметру дома</p>
+    </header>
+
+    <section>
+      <h2>1. Входные данные</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Параметр</th>
+            <th>Описание</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Размер кирпича</strong></td>
+            <td>Длина, ширина (вдоль ряда), высота (мм).</td>
+          </tr>
+          <tr>
+            <td><strong>Количество кирпичей</strong></td>
+            <td>Сколько кирпичей (Z и N) нарисовать. Ограничивает круг: при 1 — только Z1, при N — Z1 и (N−1) следующих (N и Z) с зазорами E.</td>
+          </tr>
+          <tr>
+            <td><strong>Размер зазора</strong></td>
+            <td>Невидимый «кирпич» E: 1–3 мм (зазор между кирпичами).</td>
+          </tr>
+          <tr>
+            <td><strong>Размер дома</strong></td>
+            <td>Длина и ширина дома (м или мм — по согласованию).</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>После ввода всех размеров алгоритм начинает расставлять кирпичи по правилам ниже.</p>
+    </section>
+
+    <hr />
+
+    <section>
+      <h2>2. Типы элементов</h2>
+      <ul>
+        <li><strong>Z</strong> — замыкающий кирпич (в углу). <strong>Z1</strong> — первый кирпич круга, с него начинается кладка.</li>
+        <li><strong>N</strong> — нормальный кирпич (длина вдоль ряда = x).</li>
+        <li><strong>E</strong> — зазор (пустой кирпич): длина вдоль ряда 1–3 мм случайно, рисуется цветом из инпута «Цвет зазора».</li>
+      </ul>
+    </section>
+
+    <hr />
+
+    <section>
+      <h2>3. Правила расстановки</h2>
+
+      <h3>3.1. Углы и замыкающие</h3>
+      <ul>
+        <li>Все кирпичи в <strong>углах дома</strong> — замыкающие <strong>Z</strong>.</li>
+        <li><strong>Z1</strong> — замыкающий, с которого <strong>начинается круг</strong>. Следующий за Z1 кирпич <strong>не поворачивать на 90°</strong> — он идёт вдоль той же стены.</li>
+        <li><strong>Длина Z1:</strong> всегда <strong>2x</strong> (удвоенная длина нормального кирпича вдоль ряда).</li>
+        <li><strong>Остальные Z:</strong> если до края дома осталось <strong>≤ 2x</strong>, ставится один замыкающий Z длиной в этот остаток.</li>
+      </ul>
+
+      <h3>3.2. Прилипание и зазоры</h3>
+      <ul>
+        <li>Кирпичи <strong>прилипают друг к другу</strong> (стыкуются без визуального зазора между мешами).</li>
+        <li>Между всеми кирпичами — зазоры <strong>1–3 мм</strong>, реализованные как элементы <strong>E</strong> (рисуются цветом зазора).</li>
+      </ul>
+
+      <h3>3.3. После замыкающего Z (не Z1)</h3>
+      <ul>
+        <li>Отступ от Z <strong>не делаем</strong>. К <strong>восточной</strong> стороне кирпича Z <strong>впритык</strong> лепим пустой кирпич <strong>E</strong>, следом — нормальный <strong>N</strong>.</li>
+        <li>Порядок: Z → E (впритык к восточной стороне Z) → N.</li>
+      </ul>
+
+      <h3>3.4. Один круг: последовательность</h3>
+      <ul>
+        <li><strong>Z1</strong> (длина 2x) → <strong>E1</strong> → <strong>N1</strong> → <strong>E2</strong> → <strong>N2</strong> → … до края стены → <strong>Z</strong> (замыкающий, поворот 90°) → отступ x → <strong>E</strong> → <strong>N</strong> → … по периметру.</li>
+        <li>Когда последний кирпич упирается в <strong>Z1</strong>, перед Z1 создаётся <strong>En</strong> (зазор), круг замыкается — <strong>СТОП</strong>. Дальше не рисовать.</li>
+        <li>Количество нарисованных кирпичей ограничивается полем «Количество кирпичей»: рисуются только заданное число элементов Z и N (E не считаются).</li>
+      </ul>
+
+      <h3>3.5. Число рядов</h3>
+      <ul>
+        <li>Пока не актуально. Остальные ряды (вверх) — отдельная задача, к ней вернёмся позже.</li>
+      </ul>
+    </section>
+
+    <hr />
+
+    <section>
+      <h2>4. Направление кирпича и стороны (N/S/E/W)</h2>
+      <ul>
+        <li>У кирпича есть направление.</li>
+        <li><strong>Z1</strong> ориентирован так:
+          <ul>
+            <li><strong>Север (N)</strong> — по направлению стены, куда ставим следующие кирпичи.</li>
+            <li><strong>Юг (S)</strong> — упирается в край дома.</li>
+            <li><strong>Восток (E)</strong> — в глубину дома.</li>
+            <li><strong>Запад (W)</strong> — противоположно востоку.</li>
+          </ul>
+        </li>
+        <li>У всех кирпичей (Z и N) — <strong>лейбл сторон N/S/E/W</strong> на соответствующих гранях.</li>
+        <li>В интерфейсе — <strong>галочка</strong> «Показать стороны кирпичей (N/S/E/W)» (вкл/выкл), по аналогии с «Показать все номера кирпичей».</li>
+      </ul>
+    </section>
+
+    <hr />
+
+    <section>
+      <h2>5. Интерфейс</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Элемент</th>
+            <th>Назначение</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Цвет зазора</strong></td>
+            <td>Цветовой инпут. Цвет, которым рисуются элементы E (зазоры 1–3 мм).</td>
+          </tr>
+          <tr>
+            <td><strong>Показать стороны кирпичей (N/S/E/W)</strong></td>
+            <td>Галочка: показывать/скрывать подписи сторон на кирпичах.</td>
+          </tr>
+          <tr>
+            <td><strong>Количество кирпичей</strong></td>
+            <td>Ограничение: сколько кирпичей (Z и N) нарисовать по периметру (1 = только Z1, 2 = Z1 и N1, и т.д.).</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <hr />
+
+    <section>
+      <h2>6. Итог по длинам (вдоль ряда)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Элемент</th>
+            <th>Длина вдоль ряда</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Z1</strong></td>
+            <td>2x</td>
+          </tr>
+          <tr>
+            <td><strong>Остальные Z</strong></td>
+            <td>Остаток до края дома (если остаток ≤ 2x).</td>
+          </tr>
+          <tr>
+            <td><strong>N</strong></td>
+            <td>x</td>
+          </tr>
+          <tr>
+            <td><strong>E</strong></td>
+            <td>Случайно 1–3 мм, цвет из «Цвет зазора».</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">x = ширина кирпича вдоль ряда (одна из размерностей кирпича).</p>
+    </section>
+
+    <hr />
+
+    <section>
+      <h2>7. Реализация (где искать в коде)</h2>
+      <ul>
+        <li>Логика кладки: <code>src/composables/useBrickWalls.js</code>, функция <code>buildDistributionWalls</code>.</li>
+        <li>После Z без отступа: <code>s += lenAlong</code> (далее к Z впритык ставится E, затем N).</li>
+        <li>Ограничение по количеству кирпичей: проверка <code>brickNumber - 1 >= maxBricks</code> в начале цикла по кругу.</li>
+        <li>Интерфейс: панель «Кирпич» в <code>src/components/BrickPanel.vue</code> (цвет зазора, галочка сторон).</li>
+      </ul>
+    </section>
+  </div>
+</body>
+</html>

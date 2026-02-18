@@ -20,13 +20,13 @@ const props = defineProps({
   brickHeight: { type: Number, default: 250 },
   brickGap: { type: Number, default: 2 },
   edgeColor: { type: String, default: '#00ff00' },
+  gapColor: { type: String, default: '#888888' },
   groundColor: { type: String, default: '#4a5568' },
   showAllNumbers: { type: Boolean, default: false },
+  showBrickSides: { type: Boolean, default: false },
   showBrickDimensions: { type: Boolean, default: false },
   showBrickDistances: { type: Boolean, default: false },
   labelSize: { type: Number, default: 1 },
-  bricksPerRow: { type: Number, default: 0 },
-  rows: { type: Number, default: 10 },
   distributionBrickCount: { type: Number, default: 0 },
 })
 
@@ -161,10 +161,9 @@ watch(
     props.brickHeight,
     props.brickGap,
     props.edgeColor,
+    props.gapColor,
     props.groundColor,
     props.labelSize,
-    props.bricksPerRow,
-    props.rows,
     props.distributionBrickCount,
   ],
   () => updateScene(),
@@ -173,6 +172,11 @@ watch(
 watch(
   () => props.showAllNumbers,
   (newVal) => brickApi.updateAllLabelsVisibility(newVal),
+  { immediate: true }
+)
+watch(
+  () => props.showBrickSides,
+  () => brickApi.updateAllLabelsVisibility(props.showAllNumbers),
   { immediate: true }
 )
 watch(
@@ -241,6 +245,12 @@ defineExpose({
 :deep(.brick-label.brick-label-closure.brick-label-hover) {
   background: #ff0000 !important;
   color: #fff !important;
+}
+
+:deep(.brick-label.brick-label-side) {
+  font-size: 0.85em;
+  background: rgba(100, 150, 255, 0.9);
+  color: #fff;
 }
 
 :deep(.dimension-label) {

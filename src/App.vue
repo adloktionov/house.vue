@@ -35,13 +35,13 @@
           :brick-height="brickHeight"
           :brick-gap="brickGap"
           :edge-color="edgeColor"
+          :gap-color="gapColor"
           :ground-color="groundColor"
           :show-all-numbers="showAllNumbers"
+          :show-brick-sides="showBrickSides"
           :show-brick-dimensions="showBrickDimensions"
           :show-brick-distances="showBrickDistances"
           :label-size="labelSize"
-          :bricks-per-row="bricksPerRow"
-          :rows="rows"
           :distribution-brick-count="distributionBrickCount"
           @brick-distances="brickDistances = $event"
           @brick-hover="onBrickHover"
@@ -56,7 +56,9 @@
           v-model:brick-height="brickHeight"
           v-model:brick-gap="brickGap"
           v-model:edge-color="edgeColor"
+          v-model:gap-color="gapColor"
           v-model:show-all-numbers="showAllNumbers"
+          v-model:show-brick-sides="showBrickSides"
           v-model:show-brick-dimensions="showBrickDimensions"
           v-model:show-brick-distances="showBrickDistances"
           v-model:label-size="labelSize"
@@ -102,7 +104,9 @@ const brickWidth = ref(120)
 const brickHeight = ref(65)
 const brickGap = ref(2)
 const edgeColor = ref('#00ff00')
+const gapColor = ref('#888888')
 const showAllNumbers = ref(false)
+const showBrickSides = ref(false)
 const showBrickDimensions = ref(false)
 const showBrickDistances = ref(false)
 const brickDistances = ref([])

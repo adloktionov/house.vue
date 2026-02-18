@@ -2,17 +2,19 @@
   <div class="brick-panel">
     <h3>Кирпич</h3>
     <div class="field-group">
-        <label>Количество кирпичей</label>
-        <div class="input-row">
-          <InputNumber
-            v-model="localDistributionBrickCount"
-            :min="0"
-            :max="10000"
-            :minFractionDigits="0"
-            :maxFractionDigits="0"
-            :step="1"
-          />
-          <Slider v-model="localDistributionBrickCount" :min="0" :max="500" :step="1" class="slider" />
+      <label>Количество кирпичей</label>
+      <div class="input-row">
+        <InputNumber
+          v-model="localDistributionBrickCount"
+          :min="0"
+          :max="10000"
+          :minFractionDigits="0"
+          :maxFractionDigits="0"
+          :step="1"
+        />
+        <Slider v-model="localDistributionBrickCount" :min="0" :max="500" :step="1" class="slider" />
+      </div>
+    </div>
     <div class="section">
       <h4>Размеры кирпича (мм)</h4>
       <div class="field-group">
@@ -67,6 +69,13 @@
         </div>
       </div>
       <div class="field-group">
+        <label>Цвет зазора</label>
+        <div class="color-row">
+          <input v-model="localGapColor" type="color" class="color-input" />
+          <span class="color-value">{{ localGapColor }}</span>
+        </div>
+      </div>
+      <div class="field-group">
         <label class="checkbox-label">
           <input
             type="checkbox"
@@ -75,6 +84,17 @@
             @change="emit('update:showAllNumbers', ($event.target).checked)"
           />
           Показать все номера кирпичей
+        </label>
+      </div>
+      <div class="field-group">
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            class="checkbox-input"
+            :checked="showBrickSides"
+            @change="emit('update:showBrickSides', ($event.target).checked)"
+          />
+          Показать стороны кирпичей (N/S/E/W)
         </label>
       </div>
       <div class="field-group">
@@ -126,8 +146,7 @@
         </div>
         <p class="hint">Высота стен: {{ wallHeight.toFixed(2) }} м</p>
       </div>
-  
-        </div>
+      <div class="field-group">
         <p class="hint">0 = полная кладка. При &gt;0: кирпичи по периметру</p>
       </div>
     </div>
@@ -161,7 +180,9 @@ const props = defineProps({
   brickHeight: { type: Number, default: 65 },
   brickGap: { type: Number, default: 2 },
   edgeColor: { type: String, default: '#00ff00' },
+  gapColor: { type: String, default: '#888888' },
   showAllNumbers: { type: Boolean, default: false },
+  showBrickSides: { type: Boolean, default: false },
   showBrickDimensions: { type: Boolean, default: false },
   showBrickDistances: { type: Boolean, default: false },
   brickDistances: { type: Array, default: () => [] },
@@ -176,7 +197,9 @@ const emit = defineEmits([
   'update:brickHeight',
   'update:brickGap',
   'update:edgeColor',
+  'update:gapColor',
   'update:showAllNumbers',
+  'update:showBrickSides',
   'update:showBrickDimensions',
   'update:showBrickDistances',
   'update:labelSize',
@@ -243,6 +266,10 @@ const localBrickGap = computed({
 const localEdgeColor = computed({
   get: () => props.edgeColor,
   set: (v) => emit('update:edgeColor', v ?? '#00ff00'),
+})
+const localGapColor = computed({
+  get: () => props.gapColor,
+  set: (v) => emit('update:gapColor', v ?? '#888888'),
 })
 const localLabelSize = computed({
   get: () => props.labelSize,
