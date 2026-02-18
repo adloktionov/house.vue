@@ -3,3 +3,12 @@ dist
 *.local
 .env
 .DS_Store
+deploy.config.cjs
+deploy-ssh.config
+ssh.txt
+DEPLOY.md
+deploy-ftp.cjs
+deploy-ssh.config.example
+deploy-ssh.ps1
+deploy-ssh.sh
+deploy.config.example.cjs

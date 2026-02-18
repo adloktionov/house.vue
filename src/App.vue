@@ -156,7 +156,7 @@ function onBrickHover(payload) {
 }
 
 const perimeter = computed(() => 2 * (houseLength.value + houseWidth.value))
-const brickRowLengthM = computed(() => (brickWidth.value + brickGap.value) / 1000)
+const brickRowLengthM = computed(() => (brickLength.value + brickGap.value) / 1000)
 const bricksPerRow = computed(() => Math.ceil(perimeter.value / brickRowLengthM.value))
 const totalBricks = computed(() => bricksPerRow.value * rows.value)
 const wallHeight = computed(() => rows.value * (brickHeight.value + brickGap.value) / 1000)

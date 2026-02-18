@@ -9,6 +9,7 @@ import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 const brickColor = 0xc75c3d                        // Цвет обычного кирпича (оранжево-красный)
 const brickMargin = 0.97                           // Масштаб меша для визуального зазора ~3% между кирпичами
 const closureBrickColor = 0xff0000                 // Цвет замыкающего (обрезанного) кирпича (красный)
+const closureToZ1Color = 0x9acd32                 // Цвет замыкающего до z1 (жёлто-зелёный)
 
 const ARROW_COLOR = 0xffff00                       // Цвет стрелок размеров (жёлтый)
 const LABEL_BG = '#e67e22'                        // Фон подписи размеров
@@ -18,8 +19,8 @@ export function useBrickWalls(props, emit, getSceneRefs) {
   // ========== ВНУТРЕННИЕ ПЕРЕМЕННЫЕ ==========
   // Общие геометрия и материалы для всех обычных кирпичей (экономия памяти)
   let lastBrickGeometry, lastBrickMaterial, lastEdgesGeometry, lastLineMaterial
-  // Материалы для замыкающих кирпичей (красные)
-  let closureBrickMaterial, closureBrickLineMaterial
+  // Материалы для замыкающих кирпичей (красные) и замыкающего до z1 (жёлто-зелёный)
+  let closureBrickMaterial, closureBrickLineMaterial, closureToZ1Material, closureToZ1LineMaterial
   // Материал и геометрии для зазоров E (цвет из props.gapColor)
   let gapMaterial
   let gapGeometries = []
@@ -167,26 +168,26 @@ export function useBrickWalls(props, emit, getSceneRefs) {
    * @param {number} brickW - Ширина кирпича (м)
    * @param {number} brickH - Высота кирпича (м)
    * @param {number} brickL - Длина кирпича (м)
-   * @param {Object} opts - Опции: {isClosure: boolean, closureLengthMm: number, closureAxis: string}
+   * @param {Object} opts - Опции: {isClosure, isClosureToZ1, closureLengthMm, closureAxis}
    */
   function addDimensionArrowsToBrick(mesh, brickW, brickH, brickL, opts = {}) {
-    const { isClosure = false, closureLengthMm = null, closureAxis = 'z' } = opts
+    const { isClosure = false, isClosureToZ1 = false, closureLengthMm = null, closureAxis = 'z' } = opts
     const closureLen = closureLengthMm != null ? closureLengthMm / 1000 : null
     const dimZ = closureLen != null && closureAxis === 'z' ? closureLen : brickL
     
     // Начальная точка для стрелок (нижний левый угол кирпича)
     const vertex = new THREE.Vector3(-brickW / 2, -brickH / 2, -dimZ / 2)
     
-    // Цвета и стили в зависимости от типа кирпича
-    const arrowColor = isClosure ? 0xff0000 : ARROW_COLOR
-    const labelBg = isClosure ? '#ff0000' : LABEL_BG
-    const labelText = isClosure ? '#ffffff' : LABEL_TEXT
+    // Цвета и стили в зависимости от типа кирпича (Z_TO_Z1 — жёлто-зелёный)
+    const arrowColor = isClosureToZ1 ? 0x9acd32 : (isClosure ? 0xff0000 : ARROW_COLOR)
+    const labelBg = isClosureToZ1 ? '#9acd32' : (isClosure ? '#ff0000' : LABEL_BG)
+    const labelText = (isClosureToZ1 || isClosure) ? '#ffffff' : LABEL_TEXT
     
-    // Три оси: X (ширина), Y (высота), Z (длина)
+    // Три оси: X = вдоль ряда (UI «Длина»), Y = высота, Z = толщина (UI «Ширина (ряд)»)
     const axes = [
-      { axis: 'x', dir: new THREE.Vector3(1, 0, 0), len: brickW, label: props.brickWidth },
+      { axis: 'x', dir: new THREE.Vector3(1, 0, 0), len: brickW, label: props.brickLength },
       { axis: 'y', dir: new THREE.Vector3(0, 1, 0), len: brickH, label: props.brickHeight },
-      { axis: 'z', dir: new THREE.Vector3(0, 0, 1), len: brickL, label: props.brickLength },
+      { axis: 'z', dir: new THREE.Vector3(0, 0, 1), len: brickL, label: props.brickWidth },
     ]
     
     axes.forEach(({ axis, dir, len, label }) => {
@@ -202,7 +203,7 @@ export function useBrickWalls(props, emit, getSceneRefs) {
       // Позиция подписи — середина стрелки
       const mid = vertex.clone().add(dir.clone().multiplyScalar(useLen / 2))
       const div = document.createElement('div')
-      div.className = isClosure ? 'dimension-label dimension-label-closure' : 'dimension-label'
+      div.className = isClosureToZ1 ? 'dimension-label dimension-label-closure-to-z1' : (isClosure ? 'dimension-label dimension-label-closure' : 'dimension-label')
       div.textContent = String(useLabel)
       div.style.color = labelText
       div.style.backgroundColor = labelBg
@@ -257,7 +258,12 @@ export function useBrickWalls(props, emit, getSceneRefs) {
           
           // Для замыкающих кирпичей передаём их реальную длину
           const opts = obj.userData?.isClosure && obj.userData?.closureLengthMm != null
-            ? { isClosure: true, closureLengthMm: obj.userData.closureLengthMm, closureAxis: 'z' }
+            ? {
+                isClosure: true,
+                isClosureToZ1: !!obj.userData?.isClosureToZ1,
+                closureLengthMm: obj.userData.closureLengthMm,
+                closureAxis: 'z',
+              }
             : {}
           
           addDimensionArrowsToBrick(obj, brickW, brickH, brickL, opts)
@@ -317,14 +323,15 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     const isClosure = !!mesh.userData.isClosure
     const closureMm = mesh.userData.closureLengthMm
     
-    const brickW = props.brickWidth
-    const brickL = props.brickLength
+    // В hover: первый размер = вдоль ряда (Длина), второй = толщина (Ширина ряд), третий = высота
+    const brickAlongRow = props.brickLength
+    const brickThickness = props.brickWidth
     const brickH = props.brickHeight
     
-    // Формируем строку размеров (для замыкающих используем реальную длину)
+    // Формируем строку размеров: вдоль ряда × толщина × высота (у замыкающего вдоль ряда = closureMm)
     const dims = closureMm != null
-      ? `${brickW}×${brickH}×${closureMm} мм`
-      : `${brickW}×${brickL}×${brickH} мм`
+      ? `${closureMm}×${brickThickness}×${brickH} мм`
+      : `${brickAlongRow}×${brickThickness}×${brickH} мм`
     
     // Находим расстояния до предыдущего и следующего кирпичей
     const distToPrev = distances?.find((d) => d.to === n) ?? null
@@ -425,7 +432,7 @@ export function useBrickWalls(props, emit, getSceneRefs) {
 
   /**
    * Ставит один меш (Z, N или E) на стене и добавляет в wallsGroup.
-   * type: 'Z1' | 'Z' | 'N' | 'E', lenAlong — длина вдоль ряда, brickNumber — номер для Z/N (для подписи).
+   * type: 'Z1' | 'Z' | 'Z_TO_Z1' | 'N' | 'E'. Z_TO_Z1 — замыкающий до края z1 (жёлто-зелёный).
    */
   function placeBrick(wallsGroup, wall, pos, lenAlong, type, brickNumber, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries) {
     const x = brickW
@@ -433,7 +440,8 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     const halfL = brickL / 2
     const EPS = 1e-9
     const isGap = type === 'E'
-    const isClosure = type === 'Z1' || type === 'Z'
+    const isClosureToZ1 = type === 'Z_TO_Z1'
+    const isClosure = type === 'Z1' || type === 'Z' || isClosureToZ1
 
     let geom, mat, lineMat
     if (isGap) {
@@ -446,8 +454,8 @@ export function useBrickWalls(props, emit, getSceneRefs) {
       if (isClosure) {
         geom = new THREE.BoxGeometry(lenAlong, brickH, brickL)
         closureGeometries.push(geom)
-        mat = closureBrickMaterial
-        lineMat = closureBrickLineMaterial
+        mat = isClosureToZ1 ? closureToZ1Material : closureBrickMaterial
+        lineMat = isClosureToZ1 ? closureToZ1LineMaterial : closureBrickLineMaterial
       } else {
         geom = lastBrickGeometry
         mat = lastBrickMaterial
@@ -479,6 +487,7 @@ export function useBrickWalls(props, emit, getSceneRefs) {
       wallIndex: wall.wallIndex,
       row: 0,
       isClosure: isClosure,
+      isClosureToZ1: isClosureToZ1,
       closureLengthMm: isClosure ? Math.round(lenAlong * 1000) : null,
     }
 
@@ -487,7 +496,7 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     } else {
       userData.number = brickNumber
       const labelDiv = document.createElement('div')
-      labelDiv.className = isClosure ? 'brick-label brick-label-closure' : 'brick-label'
+      labelDiv.className = isClosureToZ1 ? 'brick-label brick-label-closure-to-z1' : (isClosure ? 'brick-label brick-label-closure' : 'brick-label')
       labelDiv.textContent = brickNumber
       labelDiv.style.fontSize = `${baseFontSize}px`
       const labelObj = new CSS2DObject(labelDiv)
@@ -552,30 +561,33 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     lastBrickGeometry = new THREE.BoxGeometry(brickW, brickH, brickL)
     lastBrickMaterial = new THREE.MeshLambertMaterial({ color: brickColor, flatShading: true })
     closureBrickMaterial = new THREE.MeshLambertMaterial({ color: closureBrickColor, flatShading: true })
+    closureToZ1Material = new THREE.MeshLambertMaterial({ color: closureToZ1Color, flatShading: true })
     gapMaterial = new THREE.MeshLambertMaterial({ color: parseInt(gapColorHex, 16), flatShading: true })
     lastEdgesGeometry = new THREE.EdgesGeometry(lastBrickGeometry)
     lastLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color(props.edgeColor), linewidth: 1 })
     closureBrickLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#ff0000'), linewidth: 1 })
+    closureToZ1LineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#9acd32'), linewidth: 1 })
 
     const y = brickH / 2
     let brickNumber = 1
     const maxBricks = Math.max(1, Math.floor(props.distributionBrickCount))
 
-    // Z1 в первом углу, длина 2x
     const z1Len = 2 * x
     const wall0 = walls[0]
     placeBrick(wallsGroup, wall0, 0, z1Len, 'Z1', brickNumber++, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
 
     let s = z1Len
     while (true) {
-      // Ограничение по количеству кирпичей (Z и N)
       if (brickNumber - 1 >= maxBricks) break
 
+      // Расстояние по периметру от текущей позиции s до точки старта круга (где стоит z1).
       const remainingToStart = perimeter - s
+      // Случайный зазор E (1–3 мм) для следующей пары E+N.
       const gapE = randomGapM()
 
+      // Места не хватает на полный цикл «зазор E + кирпич N» — замыкаем круг.
       if (remainingToStart < gapE + x - EPS) {
-        // En перед Z1 — замыкаем круг
+        // Если до z1 остался хоть небольшой промежуток — ставим последний зазор En, чтобы визуально замкнуть ряд.
         if (remainingToStart > EPS) {
           const enLen = Math.max(minGapM, Math.min(gapE, remainingToStart))
           const { wi, pos } = toWallPos(s)
@@ -585,12 +597,31 @@ export function useBrickWalls(props, emit, getSceneRefs) {
         break
       }
 
+      // Правило: если следующий кирпич (Nn) после E оказался бы в зоне «до z1 ≤ 2x», то он (Nn) становится замыкающим.
+      // Длина = до западного края z1 (вплотную, без перекрытия с предыдущим кирпичом): zLenRaw = remainingToStart - gapE.
+      // (+ z1Len давало бы «до восточного края» и приводило к пересечению с N-1.)
+      //
+      // distFromNextNEndToZ1 — расстояние от восточного края «следующего N» до z1.
+      const distFromNextNEndToZ1 = remainingToStart - gapE - x
+      if (distFromNextNEndToZ1 <= 2 * x + EPS && remainingToStart > gapE + EPS) {
+        const zLenRaw = remainingToStart - gapE - brickW  // до западного края z1, вплотную
+        if (zLenRaw >= x - EPS) {
+          const zLen = Math.max(x, zLenRaw)  // правило: замыкающий не короче x
+          const { wi, pos } = toWallPos(s)
+          const wall = walls[wi]
+          placeBrick(wallsGroup, wall, pos, gapE, 'E', null, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
+          placeBrick(wallsGroup, wall, pos + gapE, zLen, 'Z_TO_Z1', brickNumber++, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
+          break
+        }
+        // иначе zLenRaw < x — не ставим короткий замыкающий, идём в E + N
+      }
+
       const { wi, pos } = toWallPos(s)
       const wall = walls[wi]
       const remaining = Math.max(0, wall.len - pos)
 
-      if (remaining > EPS && remaining <= 2 * x + EPS && s > z1Len + EPS) {
-        // Z (замыкающий, не Z1): следующий кирпич — от края кирпича Z с восточной стороны (не от угла дома)
+      if (remaining >= x - EPS && remaining <= 2 * x + EPS && s > z1Len + EPS) {
+        // Z (замыкающий, не Z1). Правило: замыкающий только если остаток >= x (не короче x).
         const lenAlong = remaining
         placeBrick(wallsGroup, wall, pos, lenAlong, 'Z', brickNumber++, y, brickW, brickL, brickH, halfThickness, baseFontSize, closureGeometries, gapGeometries)
         s += lenAlong + brickL
@@ -630,6 +661,8 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     lastLineMaterial?.dispose()
     closureBrickMaterial?.dispose()
     closureBrickLineMaterial?.dispose()
+    closureToZ1Material?.dispose()
+    closureToZ1LineMaterial?.dispose()
     gapMaterial?.dispose()
     closureGeometries.forEach((g) => g.dispose())
     closureGeometries = []
@@ -637,10 +670,11 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     gapGeometries = []
 
     // ========== КОНВЕРТАЦИЯ РАЗМЕРОВ ==========
+    // UI «Длина» = размер вдоль ряда (x), «Ширина (ряд)» = толщина кирпича (z). Не путать с именами пропсов.
     const L = props.houseLength / 2      // Половина длины дома (м)
     const W = props.houseWidth / 2       // Половина ширины дома (м)
-    const brickW = props.brickWidth / 1000
-    const brickL = props.brickLength / 1000
+    const brickW = props.brickLength / 1000   // вдоль ряда (в 3D — ось по стене) = UI «Длина»
+    const brickL = props.brickWidth / 1000    // толщина (в 3D — ось внутрь стены) = UI «Ширина (ряд)»
     const brickH = props.brickHeight / 1000
     const gapM = props.brickGap / 1000
 
