@@ -388,17 +388,29 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     const baseFontSize = 10 * (props.labelSize || 1)
     const n = Math.max(1, Math.floor(props.distributionBrickCount))  // Минимум 1 кирпич
     
-    // Размер кирпича вдоль траектории (всегда берём большую сторону, т.к. кирпич может поворачиваться)
+    // Размер кирпича вдоль траектории (всегда берём большую сторону, т.к. кирпич может поворачиваться).
+    // По смыслу это длина «обычного» кирпича N в паре N + E (E — пустой кирпич‑зазор).
     const brickAlongPath = Math.max(brickW, brickL)
     const halfBrickAlongPath = brickAlongPath / 2
-    
-    // Половина длины кирпича с учётом масштаба (для визуального зазора)
-    const halfExtent = brickAlongPath * brickMargin / 2
-    
-    // Шаг между центрами кирпичей вдоль периметра (кирпич + зазор)
-    const step = brickAlongPath * brickMargin + gapM
-    
-    // Минимальный зазор между замыкающим и следующим кирпичом/рядом (1-3 мм)
+
+    // ===== Рандомизация зазоров (пустых кирпичей E) =====
+    // Пользователь задаёт максимальный зазор в мм (props.brickGap, 1–3 мм).
+    // Мы трактуем это как Ymax, а Ymin всегда 1 мм. Каждый конкретный зазор Y_i берём случайно в [Ymin, Ymax].
+    const minGapM = 0.001                                   // 1 мм
+    const maxGapM = Math.max(minGapM, Math.min(gapM, 0.003)) // не больше 3 мм и не меньше 1 мм
+    const avgGapM = (minGapM + maxGapM) / 2
+    const randomGapM = () => minGapM + Math.random() * (maxGapM - minGapM)
+
+    // Полная длина кирпича N вдоль траектории с учётом масштаба brickMargin (визуальный зазор внутри кирпича).
+    const brickExtentM = brickAlongPath * brickMargin
+
+    // Оценочный шаг между центрами N_i и N_{i+1}:
+    //   stepEst ≈ длина кирпича (с учётом brickMargin) + средний зазор E (avgGapM).
+    // Это используется только для оценки того, сколько кирпичей помещается в один «круг» по периметру.
+    const stepEst = brickExtentM + avgGapM
+
+    // Минимальный зазор между рядами (по высоте) и между замыкающим кирпичом и следующим рядом (1–3 мм).
+    // Это зазор по оси Y (ряды), а не вдоль стены.
     const closureGapM = Math.min(Math.max(gapM, 0.001), 0.003)
 
     // ========== ПОСТРОЕНИЕ ТРАЕКТОРИИ ПО ПЕРИМЕТРУ ==========
@@ -426,8 +438,8 @@ export function useBrickWalls(props, emit, getSceneRefs) {
       segEnds.push(acc)
     }
     
-    // Количество кирпичей в одном круге по периметру
-    const bricksPerLap = perimeter > 1e-6 ? Math.max(1, Math.floor(perimeter / step)) : n
+    // Количество кирпичей в одном круге по периметру (приблизительная оценка по среднему шагу).
+    const bricksPerLap = perimeter > 1e-6 ? Math.max(1, Math.floor(perimeter / stepEst)) : n
 
     // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ НАВИГАЦИИ ПО ТРАЕКТОРИИ ==========
     
@@ -515,68 +527,55 @@ export function useBrickWalls(props, emit, getSceneRefs) {
     closureBrickLineMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color('#ff0000'), linewidth: 1 })
 
     // ========== ОСНОВНОЙ ЦИКЛ СОЗДАНИЯ КИРПИЧЕЙ ==========
+    // Здесь реализуется последовательность N1 + E1 + N2 + E2 + ... + Z:
+    // - N — обычный кирпич
+    // - E — «пустой кирпич» (зазор) случайной длины от 1 до props.brickGap мм
+    //
+    // В геометрии мы не рисуем E, он учитывается только как дополнительное смещение центра следующего кирпича.
+    // Расстояние между центрами N_i и N_{i+1} = brickExtentM + randomGapM().
+    let distAlong = 0 // текущее расстояние вдоль периметра для центра кирпича (не по модулю)
+
     for (let i = 0; i < n; i++) {
-      // Определяем ряд и позицию в круге
+      // Определяем ряд и позицию в круге (по оценочному количеству кирпичей на один обход)
       const row = Math.floor(i / bricksPerLap)           // Номер ряда (0, 1, 2, ...)
       const posInLap = i % bricksPerLap                  // Позиция в текущем круге (0..bricksPerLap-1)
       
-      // Смещение для нечётных рядов (чередование на полкирпича для разбежки швов)
-      const offsetForRow = (row % 2) * halfBrickAlongPath
-      
-      // Расстояние вдоль периметра с учётом смещения ряда
-      let dist = (offsetForRow + posInLap * step) % (perimeter || 1)
+      // Для каждого ряда делаем небольшое смещение на полкирпича (чередование швов),
+      // но distAlong накапливаем глобально, чтобы зазоры E_i не сбрасывались.
+      if (posInLap === 0) {
+        const offsetForRow = (row % 2) * halfBrickAlongPath
+        distAlong = offsetForRow
+      }
+
+      // Оборачиваем расстояние в пределах периметра для поиска сегмента и точки
+      const distWrapped = perimeter > 1e-6 ? distAlong % perimeter : 0
       
       // Высота кирпича (центр по Y)
       const y = row * (brickH + closureGapM) + brickH / 2
 
       // Определяем сегмент и угол
-      const segmentEnd = getSegmentEnd(dist)
-      const segIndex = getSegmentIndex(dist)
-      const cornerDist = getCornerDist(dist)
-
-      // ========== ОБРАБОТКА ПЕРЕХОДА МЕЖДУ СЕГМЕНТАМИ ==========
-      // Если мы первый кирпич нового сегмента после угла, проверяем предыдущий кирпич
-      if (segIndex > 0) {
-        const posInLapPrev = posInLap === 0 ? bricksPerLap - 1 : posInLap - 1
-        const distPrev = (offsetForRow + posInLapPrev * step) % (perimeter || 1)
-        
-        // Если предыдущий кирпич был на предыдущем сегменте (не перешёл через угол)
-        if (distPrev < segEnds[segIndex - 1]) {
-          const cornerDistPrev = getPrevSegmentCornerDist(segIndex)
-          const distFromEdgePrev = cornerDistPrev - (distPrev + halfExtent)
-          
-          // Проверяем, был ли предыдущий кирпич замыкающим
-          const prevWasClosure = distFromEdgePrev > 1e-6 && distFromEdgePrev < brickAlongPath
-          
-          // Полудлина кирпича вдоль пути для текущего сегмента
-          const halfExtentCurrent = (segIndex === 0 || segIndex === 2) ? halfL * brickMargin : halfW * brickMargin
-          
-          // Если предыдущий был замыкающим и текущий перекрыл бы его — сдвигаем за угол
-          if (prevWasClosure && dist - halfExtentCurrent < cornerDistPrev) {
-            dist = cornerDistPrev + halfExtentCurrent + closureGapM
-          }
-        }
-      }
+      const segIndex = getSegmentIndex(distWrapped)
+      const cornerDist = getCornerDist(distWrapped)
       
       // ========== ОПРЕДЕЛЕНИЕ ЗАМЫКАЮЩЕГО КИРПИЧА ==========
       // Полудлина кирпича вдоль пути на текущем сегменте
       const halfExtentSeg = (segIndex === 0 || segIndex === 2) ? halfL * brickMargin : halfW * brickMargin
       
       // Расстояние от края кирпича до угла
-      const distFromEdgeToCorner = cornerDist - (dist + halfExtentSeg)
+      const distFromEdgeToCorner = cornerDist - (distWrapped + halfExtentSeg)
       
-      // Размер кирпича вдоль пути на текущем сегменте
+      // Размер кирпича вдоль пути на текущем сегменте (без учёта brickMargin)
       const brickExtentSeg = (segIndex === 0 || segIndex === 2) ? brickL : brickW
       
       // Кирпич становится замыкающим, если его край не достаёт до угла, но расстояние меньше длины целого кирпича
       const needClosure = distFromEdgeToCorner > 1e-6 && distFromEdgeToCorner < brickExtentSeg
       
       // Вычисляем длину замыкающего кирпича (в метрах)
-      const closureLenM = needClosure ? Math.min(cornerDist - (dist - halfExtentSeg), 2 * brickAlongPath) : null
+      const closureLenM = needClosure ? Math.min(cornerDist - (distWrapped - halfExtentSeg), 2 * brickAlongPath) : null
       const closureLen = closureLenM != null ? closureLenM / brickMargin : null
       
       // Позиция центра кирпича: для замыкающего — середина между началом и углом, иначе — обычная позиция
-      const posDist = needClosure ? (dist - halfExtentSeg + cornerDist) / 2 : dist
+      const posDist = needClosure ? (distWrapped - halfExtentSeg + cornerDist) / 2 : distWrapped
       const pt = pointAtDistance(posDist)
 
       // ========== СОЗДАНИЕ ГЕОМЕТРИИ ==========
@@ -644,6 +643,11 @@ export function useBrickWalls(props, emit, getSceneRefs) {
       
       // Добавляем кирпич в группу стен
       wallsGroup.add(mesh)
+
+      // После установки кирпича сдвигаем расстояние вдоль периметра:
+      // центр следующего кирпича = центр текущего + длина кирпича (с учётом brickMargin) + случайный зазор E.
+      // Таким образом реализуем пару N + E (E — пустой кирпич‑зазор).
+      distAlong += brickExtentM + randomGapM()
     }
 
     // Сбрасываем hover-кирпич после пересборки
