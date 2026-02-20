@@ -3,6 +3,7 @@
     <nav class="app-nav">
       <router-link to="/" class="app-nav__link" active-class="app-nav__link_active">Калькулятор</router-link>
       <router-link to="/history" class="app-nav__link" active-class="app-nav__link_active">История</router-link>
+      <router-link to="/bin-packing" class="app-nav__link" active-class="app-nav__link_active">Bin Packing</router-link>
     </nav>
     <main class="app-main">
       <router-view />

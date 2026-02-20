@@ -36,15 +36,16 @@ function escapeCell(s) {
   return String(s || '').replace(/\|/g, ',').trim() || '—'
 }
 
-/** Пытается исправить кракозябры: сообщение в репо могло быть сохранено в CP1251. */
+/** Пытается исправить кракозябры: байты в репо были CP1251, git отдал как UTF-8. */
 function fixMessageEncoding(msg) {
   if (!msg || msg.length === 0) return msg
   try {
     const fixed = Buffer.from(msg, 'utf8').toString('cp1251')
-    if (fixed.includes('\uFFFD') || fixed.length !== msg.length) return msg
-    const looksLikeMojibake = /Рґ|Рѕ|СЂ|Рє|С‹|Рї|СЏ|Р»|Рё|РЅ|Р°|Р±|РІ|Рі|Рµ|С‚/.test(msg)
-    const looksLikeRussian = /[а-яёА-ЯЁ]{2,}/.test(fixed)
-    if (looksLikeMojibake && looksLikeRussian) return fixed
+    if (fixed.includes('\uFFFD')) return msg
+    const fixedHasRussian = /[а-яёА-ЯЁ]{2,}/.test(fixed)
+    const msgHasRussian = /[а-яёА-ЯЁ]{2,}/.test(msg)
+    const msgLikelyMojibake = msg.includes('\u0420') || msg.includes('\u0421')
+    if (fixedHasRussian && (!msgHasRussian || msgLikelyMojibake)) return fixed
   } catch (_) {}
   return msg
 }

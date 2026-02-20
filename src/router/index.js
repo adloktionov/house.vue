@@ -13,6 +13,12 @@ const routes = [
     component: () => import('../views/HistoryView.vue'),
     meta: { title: 'История: коммиты, билды, деплои' },
   },
+  {
+    path: '/bin-packing',
+    name: 'bin-packing',
+    component: () => import('../views/BinPackingView.vue'),
+    meta: { title: 'Bin Packing Problem' },
+  },
 ]
 
 const router = createRouter({
