@@ -107,13 +107,13 @@ import UXUI from '../components/UXUI.vue'
 import Camera from '../components/Camera.vue'
 import PathBrickDrawer from '../components/PathBrickDrawer.vue'
 
-const houseLength = ref(2)
-const houseWidth = ref(2)
+const houseLength = ref(5)
+const houseWidth = ref(5)
 const groundColor = ref('#4a5568')
 
-const brickLength = ref(250)
-const brickWidth = ref(120)
-const brickHeight = ref(65)
+const brickLength = ref(1000)
+const brickWidth = ref(200)
+const brickHeight = ref(100)
 const brickGap = ref(2)
 const edgeColor = ref('#00ff00')
 const gapColor = ref('#888888')
@@ -124,7 +124,7 @@ const showBrickDistances = ref(false)
 const brickDistances = ref([])
 const labelSize = ref(1)
 
-const rows = ref(1)
+const rows = ref(3)
 const distributionBrickCount = ref(3)
 
 const hoveredBrickData = ref(null)
