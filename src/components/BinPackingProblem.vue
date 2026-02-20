@@ -1,7 +1,17 @@
 <template>
   <div class="bin-packing-problem">
-    <h2 class="bin-packing-problem__title">классическая NP-полная задача</h2>
-    <div class="bin-packing-problem__content" v-html="htmlContent"></div>
+    <template v-if="loading">
+      <div class="bin-packing-problem__loading">
+        <p class="bin-packing-problem__loading-text">загрузка задачи</p>
+        <div class="bin-packing-problem__preloader">
+          <div class="bin-packing-problem__preloader-fill"></div>
+        </div>
+      </div>
+    </template>
+    <template v-else>
+      <h2 class="bin-packing-problem__title">классическая NP-полная задача</h2>
+      <div class="bin-packing-problem__content" v-html="htmlContent"></div>
+    </template>
   </div>
 </template>
 
@@ -10,8 +20,10 @@ import { ref, onMounted } from 'vue'
 import { marked } from 'marked'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import mdRaw from '../content/bin-packing.md?raw'
 
 const htmlContent = ref('')
+const loading = ref(true)
 
 /** Декодирует HTML-сущности в строке формулы (marked экранирует < и >). */
 function decodeFormula(s) {
@@ -49,12 +61,12 @@ function renderMath(html) {
 
 onMounted(async () => {
   try {
-    const res = await fetch('/bin-packing.md')
-    const md = await res.text()
-    const rawHtml = await marked.parse(md ?? '')
+    const rawHtml = await marked.parse(mdRaw ?? '')
     htmlContent.value = renderMath(rawHtml)
   } catch {
     htmlContent.value = '<p>Не удалось загрузить текст.</p>'
+  } finally {
+    loading.value = false
   }
 })
 </script>
@@ -84,4 +96,39 @@ onMounted(async () => {
 .bin-packing-problem__content :deep(.katex) { font-size: 1.05em; }
 .bin-packing-problem__content :deep(.katex-display) { margin: 0.75em 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
 .bin-packing-problem__content :deep(.math-error) { color: #f48fb1; }
+
+.bin-packing-problem__loading {
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+
+.bin-packing-problem__loading-text {
+  font-size: 1.1rem;
+  color: #b0b8c0;
+  margin-bottom: 1.25rem;
+}
+
+.bin-packing-problem__preloader {
+  width: 100%;
+  max-width: 280px;
+  height: 6px;
+  margin: 0 auto;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bin-packing-problem__preloader-fill {
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, #64b5f6, #90caf9);
+  border-radius: 3px;
+  animation: bin-packing-fill 1.2s ease-in-out infinite;
+}
+
+@keyframes bin-packing-fill {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(250%); }
+  100% { transform: translateX(-100%); }
+}
 </style>
