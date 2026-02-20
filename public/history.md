@@ -17,4 +17,4 @@
 | 16.02.2026 | 14:08:01 | 07b6f9e | fix: chekboks pokazat nomera - upravlenie cherez labelObj.visible | коммит | git checkout 07b6f9e |
 | 16.02.2026 | 13:24:18 | b360523 | feat: edge color picker, default green, brick outline | коммит | git checkout b360523 |
 | 16.02.2026 | 13:17:12 | 86ff772 | feat: brick presets (STO NAAG), gap 1-3mm, sizes 1-1000, Dropdown | коммит | git checkout 86ff772 |
-| 16.02.2026 | 12:46:36 | cfd40f4 | feat: РєР°Р»СЊРєСѓР»СЏС‚РѕСЂ РєРёСЂРїРёС‡РµР№ СЃ 3D РІРёР·СѓР°Р»РёР·Р°С†РёРµР№ Three.js | коммит | git checkout cfd40f4 |
+| 16.02.2026 | 12:46:36 | cfd40f4 | feat: РєР°Р»СЊРєСѓР»СЏС‚РѕСЂ РєРёСЂРїРёС‡РµР№ СЃ 3D РІРёР·СѓР°Р»РёР·Р°С†РёРµР№ Three.js | коммит | git checkout cfd40f4 || 20.02.2026 | 17:29:38 | a258ca3 | feat: СЃС‚Р°СЂС‚РѕРІР°СЏ РєР°РјРµСЂР° 4.76,2.85,4.76; РєРёСЂРїРёС‡ 625x500x250 РїРѕ СЃРєСЂРёРЅС€РѕС‚Сѓ | коммит | git checkout a258ca3 |
