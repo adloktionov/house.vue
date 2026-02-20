@@ -69,6 +69,17 @@
       </aside>
     </main>
 
+    <section class="path-section">
+      <h2 class="path-section__title">Путь и кирпичи</h2>
+      <PathBrickDrawer
+        :brick-length="brickLength"
+        :brick-width="brickWidth"
+        :brick-height="brickHeight"
+        :brick-gap="brickGap"
+        :gap-color="gapColor"
+      />
+    </section>
+
     <UXUI
       :hovered-brick-data="hoveredBrickData"
       :pointer-x="pointerX"
@@ -94,6 +105,7 @@ import HouseCanvas from './components/HouseCanvas.vue'
 import ResultsTable from './components/ResultsTable.vue'
 import UXUI from './components/UXUI.vue'
 import Camera from './components/Camera.vue'
+import PathBrickDrawer from './components/PathBrickDrawer.vue'
 
 const houseLength = ref(2)
 const houseWidth = ref(2)
@@ -218,6 +230,16 @@ const wallHeight = computed(() => rows.value * (brickHeight.value + brickGap.val
   align-items: stretch;
   min-height: 480px;
   width: 100%;
+}
+
+.path-section {
+  padding: 0 1.5rem 1.5rem;
+}
+
+.path-section__title {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.9;
 }
 
 .footer {

@@ -604,7 +604,8 @@ export function useBrickWalls(props, emit, getSceneRefs) {
       // distFromNextNEndToZ1 — расстояние от восточного края «следующего N» до z1.
       const distFromNextNEndToZ1 = remainingToStart - gapE - x
       if (distFromNextNEndToZ1 <= 2 * x + EPS && remainingToStart > gapE + EPS) {
-        const zLenRaw = remainingToStart - gapE - brickW  // до западного края z1, вплотную
+        debugger
+        const zLenRaw = remainingToStart - gapE - brickL  // до западного края z1, вплотную
         if (zLenRaw >= x - EPS) {
           const zLen = Math.max(x, zLenRaw)  // правило: замыкающий не короче x
           const { wi, pos } = toWallPos(s)
