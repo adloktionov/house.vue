@@ -111,9 +111,9 @@ const houseLength = ref(5)
 const houseWidth = ref(5)
 const groundColor = ref('#4a5568')
 
-const brickLength = ref(1000)
-const brickWidth = ref(200)
-const brickHeight = ref(100)
+const brickLength = ref(625)
+const brickWidth = ref(500)
+const brickHeight = ref(250)
 const brickGap = ref(2)
 const edgeColor = ref('#00ff00')
 const gapColor = ref('#888888')
@@ -132,7 +132,7 @@ const pointerX = ref(0)
 const pointerY = ref(0)
 
 const houseCanvasRef = ref(null)
-const cameraPos = ref({ x: 20, y: 12, z: 20 })
+const cameraPos = ref({ x: 4.76, y: 2.85, z: 4.76 })
 const fourViewMode = ref(false)
 
 function onCameraPosition({ x, y, z }) {

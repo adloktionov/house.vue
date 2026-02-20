@@ -6,7 +6,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 
-const DEFAULT_CAM_POS = { x: 20, y: 12, z: 20 }
+const DEFAULT_CAM_POS = { x: 4.76, y: 2.85, z: 4.76 }
 const CAM_DIST = 25
 
 export function useHouseScene(containerRef) {
