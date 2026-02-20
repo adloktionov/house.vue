@@ -2,6 +2,12 @@
   <div class="history-panel">
     <div class="history-panel__table-wrap">
       <h3 class="history-panel__title">История: коммиты, билды, деплои</h3>
+      <div class="history-panel__help">
+        <strong>Как пользоваться:</strong> <strong>«Обновить таблицу»</strong> — в режиме разработки (<code>npm run dev</code>) запускает скрипты <code>import-history</code> и <code>backfill-history</code>, обновляет <code>history.md</code> и перерисовывает таблицу. На выложенном сайте кнопка просто перезагружает данные из файла. После <code>git commit</code> — <code>npm run commit-history</code>; при билде/деплое записи добавляются автоматически. Справа: выбор дня и календарь (жёлтый — коммиты, зелёный — билды, синий — деплои).
+      </div>
+      <button type="button" class="history-panel__refresh" :disabled="loading" @click="refreshTable">
+        Обновить таблицу
+      </button>
       <template v-for="(rows, monthKey) in byMonth" :key="monthKey">
         <h4 class="history-panel__month">{{ monthTitle(monthKey) }}</h4>
         <table class="history-panel__table">
@@ -9,8 +15,19 @@
             <tr>
               <th>Дата</th>
               <th>Время</th>
+              <th>ID коммита</th>
               <th>Текст коммита</th>
-              <th>Тип</th>
+              <th class="history-panel__th-type" @click="typeFilterOpen = !typeFilterOpen">
+                Тип
+                <span class="history-panel__th-type-arrow">{{ typeFilterOpen ? '▲' : '▼' }}</span>
+                <div v-if="typeFilterOpen" class="history-panel__type-dropdown" @click.stop>
+                  <button type="button" :class="{ 'history-panel__type_active': typeFilter === 'all' }" @click="typeFilter = 'all'; typeFilterOpen = false">Все</button>
+                  <button type="button" :class="{ 'history-panel__type_active': typeFilter === 'коммит' }" @click="typeFilter = 'коммит'; typeFilterOpen = false">коммит</button>
+                  <button type="button" :class="{ 'history-panel__type_active': typeFilter === 'билд' }" @click="typeFilter = 'билд'; typeFilterOpen = false">билд</button>
+                  <button type="button" :class="{ 'history-panel__type_active': typeFilter === 'деплой' }" @click="typeFilter = 'деплой'; typeFilterOpen = false">деплой</button>
+                </div>
+              </th>
+              <th>Команда отката</th>
             </tr>
           </thead>
           <tbody>
@@ -21,13 +38,16 @@
             >
               <td>{{ row.date }}</td>
               <td>{{ row.time }}</td>
+              <td>{{ row.commitId }}</td>
               <td>{{ row.message }}</td>
               <td>{{ row.type }}</td>
+              <td class="history-panel__cmd"><code>{{ row.gitCommand }}</code></td>
             </tr>
           </tbody>
         </table>
       </template>
       <p v-if="!entries.length && !loading" class="history-panel__empty">Нет записей. Запустите commit-history, build или deploy.</p>
+      <p v-else-if="entries.length && !filteredEntries.length" class="history-panel__empty">Нет записей за выбранный день или типа. Сбросьте день или выберите «Все» в Тип.</p>
       <p v-if="loading" class="history-panel__loading">Загрузка…</p>
     </div>
     <div class="history-panel__right">
@@ -76,21 +96,37 @@ const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 const calendarYear = ref(new Date().getFullYear())
 const calendarMonth = ref(new Date().getMonth())
 const selectedDateStr = ref('')
+const typeFilter = ref('all')
+const typeFilterOpen = ref(false)
 
 function parseMdTable(text) {
   const lines = text.trim().split(/\r?\n/)
   const rows = []
+  const sepLike = /^\|[\s\-|]+\|$/
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (!line.startsWith('|') || line === '|------|-------|---------------|-----|') continue
+    if (!line.startsWith('|') || sepLike.test(line.trim())) continue
     const cells = line.split('|').map((c) => c.trim()).filter(Boolean)
     if (cells.length >= 4 && cells[0] !== 'Дата') {
-      rows.push({
-        date: cells[0],
-        time: cells[1],
-        message: cells[2],
-        type: cells[3],
-      })
+      if (cells.length >= 6) {
+        rows.push({
+          date: cells[0],
+          time: cells[1],
+          commitId: cells[2],
+          message: cells[3],
+          type: cells[4],
+          gitCommand: cells[5],
+        })
+      } else {
+        rows.push({
+          date: cells[0],
+          time: cells[1],
+          commitId: '—',
+          message: cells[2],
+          type: cells[3],
+          gitCommand: '—',
+        })
+      }
     }
   }
   return rows
@@ -98,9 +134,32 @@ function parseMdTable(text) {
 
 const entries = computed(() => parseMdTable(rawText.value))
 
+function selectedDateToRowFormat(s) {
+  if (!s || s.length < 10) return ''
+  const [y, m, d] = s.split('-')
+  return `${d}.${m}.${y}`
+}
+
+function normalizeType(t) {
+  return (t || '').trim().toLowerCase()
+}
+
+const filteredEntries = computed(() => {
+  let list = entries.value
+  if (selectedDateStr.value) {
+    const targetDate = selectedDateToRowFormat(selectedDateStr.value)
+    list = list.filter((row) => row.date === targetDate)
+  }
+  if (typeFilter.value !== 'all') {
+    const want = normalizeType(typeFilter.value)
+    list = list.filter((row) => normalizeType(row.type) === want)
+  }
+  return list
+})
+
 const byMonth = computed(() => {
   const map = {}
-  for (const row of entries.value) {
+  for (const row of filteredEntries.value) {
     const [d, m, y] = row.date.split('.')
     const key = `${y}-${m}`
     if (!map[key]) map[key] = []
@@ -203,14 +262,30 @@ function selectDay(day) {
   selectedDateStr.value = dayToInputValue(day)
 }
 
+async function loadHistory() {
+  const url = '/history.md?t=' + Date.now()
+  const r = await fetch(url)
+  rawText.value = r.ok ? (await r.text()) || '' : ''
+}
+
+/** Запускает скрипты (import-history, backfill), обновляет history.md и подгружает данные (только в dev). */
+async function refreshTable() {
+  if (loading.value) return
+  loading.value = true
+  try {
+    if (import.meta.env.DEV) {
+      const r = await fetch('/api/refresh-history')
+      rawText.value = r.ok ? (await r.text()) || '' : ''
+    } else {
+      await loadHistory()
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
 onMounted(() => {
-  fetch('/history.md')
-    .then((r) => r.ok ? r.text() : '')
-    .then((text) => {
-      rawText.value = text || ''
-      loading.value = false
-    })
-    .catch(() => { loading.value = false })
+  loadHistory().finally(() => { loading.value = false })
 })
 </script>
 
@@ -234,6 +309,40 @@ onMounted(() => {
   font-size: 1rem;
   margin-bottom: 0.75rem;
   color: #e0e6ec;
+}
+
+.history-panel__help {
+  font-size: 0.8rem;
+  color: #a0a8b0;
+  margin-bottom: 1rem;
+  line-height: 1.45;
+}
+
+.history-panel__help code {
+  padding: 0.1em 0.35em;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.history-panel__refresh {
+  margin-bottom: 1rem;
+  padding: 0.5rem 1rem;
+  background: rgba(33, 150, 243, 0.25);
+  border: 1px solid rgba(33, 150, 243, 0.5);
+  border-radius: 8px;
+  color: #90caf9;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.history-panel__refresh:hover:not(:disabled) {
+  background: rgba(33, 150, 243, 0.4);
+}
+
+.history-panel__refresh:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .history-panel__month {
@@ -260,8 +369,69 @@ onMounted(() => {
   color: #b0b8c0;
 }
 
+.history-panel__th-type {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+
+.history-panel__th-type:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.history-panel__th-type-arrow {
+  margin-left: 0.25rem;
+  font-size: 0.7em;
+  opacity: 0.8;
+}
+
+.history-panel__type-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  margin-top: 2px;
+  padding: 0.25rem;
+  background: rgba(30, 35, 50, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  min-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.history-panel__type-dropdown button {
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #d0d8e0;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-panel__type-dropdown button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.history-panel__type_active {
+  background: rgba(33, 150, 243, 0.25) !important;
+  color: #90caf9 !important;
+}
+
 .history-panel__table td {
   color: #d0d8e0;
+}
+
+.history-panel__cmd code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0.15em 0.4em;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .history-panel__row_commit { background: rgba(255, 193, 7, 0.12); }

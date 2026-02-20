@@ -8,6 +8,8 @@
     "preview": "vite preview",
     "deploy": "node deploy-ftp.cjs",
     "commit-history": "node scripts/append-history.cjs commit",
+    "backfill-history": "node scripts/backfill-history-commits.cjs",
+    "import-history": "node scripts/import-git-history.cjs",
     "deploy:ssh": "bash deploy-ssh.sh",
     "deploy:ssh-ps1": "powershell -ExecutionPolicy Bypass -File deploy-ssh.ps1"
   },
@@ -16,12 +18,13 @@
     "primeicons": "^7.0.0",
     "primevue": "^3.48.0",
     "three": "^0.160.1",
-    "vue": "^3.4.0"
+    "vue": "^3.4.0",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
-    "ftp-deploy": "^2.4.4",
     "@types/three": "^0.182.0",
     "@vitejs/plugin-vue": "^5.0.0",
+    "ftp-deploy": "^2.4.4",
     "vite": "^5.0.0"
   },
   "overrides": {
