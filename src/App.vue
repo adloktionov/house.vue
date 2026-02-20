@@ -1,5 +1,6 @@
 <template>
   <div class="app">
+    <HistoryPanel />
     <header class="header">
       <h1>Калькулятор кирпичей</h1>
       <p>Оценка количества кирпичей для стен дома</p>
@@ -106,6 +107,7 @@ import ResultsTable from './components/ResultsTable.vue'
 import UXUI from './components/UXUI.vue'
 import Camera from './components/Camera.vue'
 import PathBrickDrawer from './components/PathBrickDrawer.vue'
+import HistoryPanel from './components/HistoryPanel.vue'
 
 const houseLength = ref(2)
 const houseWidth = ref(2)

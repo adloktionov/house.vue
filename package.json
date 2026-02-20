@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/append-history.cjs build",
     "preview": "vite preview",
     "deploy": "node deploy-ftp.cjs",
+    "commit-history": "node scripts/append-history.cjs commit",
     "deploy:ssh": "bash deploy-ssh.sh",
     "deploy:ssh-ps1": "powershell -ExecutionPolicy Bypass -File deploy-ssh.ps1"
   },
