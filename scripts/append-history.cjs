@@ -34,7 +34,12 @@ function getCommitRow() {
   try {
     const dateStr = execSync('git log -1 --format=%ci', { encoding: 'utf-8' }).trim()
     const msg = execSync('git log -1 --format=%s', { encoding: 'utf-8' }).trim()
-    const d = dateStr ? new Date(dateStr.replace(' ', 'T')) : new Date()
+    let d = new Date()
+    if (dateStr) {
+      const iso = dateStr.replace(' ', 'T').replace(/\s*([+-])(\d{2})(\d{2})$/, '$1$2:$3')
+      const parsed = new Date(iso)
+      if (!Number.isNaN(parsed.getTime())) d = parsed
+    }
     const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '.')
     const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
     return { date, time, msg: escapeCell(msg) }
