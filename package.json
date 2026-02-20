@@ -10,6 +10,7 @@
     "commit-history": "node scripts/append-history.cjs commit",
     "backfill-history": "node scripts/backfill-history-commits.cjs",
     "import-history": "node scripts/import-git-history.cjs",
+    "push": "node scripts/git-push.cjs",
     "deploy:ssh": "bash deploy-ssh.sh",
     "deploy:ssh-ps1": "powershell -ExecutionPolicy Bypass -File deploy-ssh.ps1"
   },
